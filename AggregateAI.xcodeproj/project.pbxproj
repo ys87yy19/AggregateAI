@@ -13,6 +13,13 @@
 		AA000004 /* AIProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA000014 /* AIProvider.swift */; };
 		AA000005 /* PersistentWebView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA000015 /* PersistentWebView.swift */; };
 		AA000006 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = AA000016 /* Assets.xcassets */; };
+		BB000011 /* SettingsKeys.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB000001 /* SettingsKeys.swift */; };
+		BB000012 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB000002 /* SettingsView.swift */; };
+		BB000013 /* HotkeyRecorderView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB000003 /* HotkeyRecorderView.swift */; };
+		BB000014 /* NotificationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB000004 /* NotificationService.swift */; };
+		BB000015 /* ExportService.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB000005 /* ExportService.swift */; };
+		BB000016 /* ObsidianService.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB000006 /* ObsidianService.swift */; };
+		BB000017 /* ClipboardMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB000007 /* ClipboardMonitor.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -24,6 +31,13 @@
 		AA000015 /* PersistentWebView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PersistentWebView.swift; sourceTree = "<group>"; };
 		AA000016 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		AA000017 /* AggregateAI.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = AggregateAI.entitlements; sourceTree = "<group>"; };
+		BB000001 /* SettingsKeys.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsKeys.swift; sourceTree = "<group>"; };
+		BB000002 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
+		BB000003 /* HotkeyRecorderView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HotkeyRecorderView.swift; sourceTree = "<group>"; };
+		BB000004 /* NotificationService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationService.swift; sourceTree = "<group>"; };
+		BB000005 /* ExportService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExportService.swift; sourceTree = "<group>"; };
+		BB000006 /* ObsidianService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ObsidianService.swift; sourceTree = "<group>"; };
+		BB000007 /* ClipboardMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClipboardMonitor.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -53,10 +67,33 @@
 				AA000013 /* ContentView.swift */,
 				AA000014 /* AIProvider.swift */,
 				AA000015 /* PersistentWebView.swift */,
+				BB000030 /* Settings */,
+				BB000031 /* Services */,
 				AA000016 /* Assets.xcassets */,
 				AA000017 /* AggregateAI.entitlements */,
 			);
 			path = AggregateAI;
+			sourceTree = "<group>";
+		};
+		BB000030 /* Settings */ = {
+			isa = PBXGroup;
+			children = (
+				BB000001 /* SettingsKeys.swift */,
+				BB000002 /* SettingsView.swift */,
+				BB000003 /* HotkeyRecorderView.swift */,
+			);
+			path = Settings;
+			sourceTree = "<group>";
+		};
+		BB000031 /* Services */ = {
+			isa = PBXGroup;
+			children = (
+				BB000004 /* NotificationService.swift */,
+				BB000005 /* ExportService.swift */,
+				BB000006 /* ObsidianService.swift */,
+				BB000007 /* ClipboardMonitor.swift */,
+			);
+			path = Services;
 			sourceTree = "<group>";
 		};
 		AA000022 /* Products */ = {
@@ -141,6 +178,13 @@
 				AA000003 /* ContentView.swift in Sources */,
 				AA000004 /* AIProvider.swift in Sources */,
 				AA000005 /* PersistentWebView.swift in Sources */,
+				BB000011 /* SettingsKeys.swift in Sources */,
+				BB000012 /* SettingsView.swift in Sources */,
+				BB000013 /* HotkeyRecorderView.swift in Sources */,
+				BB000014 /* NotificationService.swift in Sources */,
+				BB000015 /* ExportService.swift in Sources */,
+				BB000016 /* ObsidianService.swift in Sources */,
+				BB000017 /* ClipboardMonitor.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

@@ -1,17 +1,76 @@
 import SwiftUI
+import Carbon.HIToolbox
 
 // MARK: - App State
 
 @MainActor
 final class AppState: ObservableObject {
     @Published var selectedTab: AIProvider = .all
-    @Published var layoutMode: LayoutMode = .threeColumn
-    @Published var appearanceMode: AppearanceMode = .system
-    @Published var isPinned: Bool = false
     @Published var syncQuestion: String = ""
     @Published var userAgentSettings = UserAgentSettings.recommended
 
+    @Published var layoutMode: LayoutMode = .threeColumn {
+        didSet { UserDefaults.standard.set(layoutMode.rawValue, forKey: SettingsKeys.layoutMode) }
+    }
+    @Published var appearanceMode: AppearanceMode = .system {
+        didSet { UserDefaults.standard.set(appearanceMode.rawValue, forKey: SettingsKeys.appearanceMode) }
+    }
+    @Published var isPinned: Bool = false {
+        didSet { UserDefaults.standard.set(isPinned, forKey: SettingsKeys.isPinned) }
+    }
+
+    // Feature 7: Custom Hotkey
+    @Published var hotkeyKeyCode: UInt32 = UInt32(kVK_ANSI_A) {
+        didSet { UserDefaults.standard.set(Int(hotkeyKeyCode), forKey: SettingsKeys.hotkeyKeyCode) }
+    }
+    @Published var hotkeyModifiers: UInt32 = UInt32(cmdKey | shiftKey) {
+        didSet { UserDefaults.standard.set(Int(hotkeyModifiers), forKey: SettingsKeys.hotkeyModifiers) }
+    }
+
+    // Feature 8: Notifications
+    @Published var notificationsEnabled: Bool = false {
+        didSet { UserDefaults.standard.set(notificationsEnabled, forKey: SettingsKeys.notificationsEnabled) }
+    }
+    @Published var notifyOnlyWhenHidden: Bool = true {
+        didSet { UserDefaults.standard.set(notifyOnlyWhenHidden, forKey: SettingsKeys.notifyOnlyWhenHidden) }
+    }
+
+    // Feature 13: Clipboard monitoring
+    @Published var clipboardMonitorEnabled: Bool = false {
+        didSet { UserDefaults.standard.set(clipboardMonitorEnabled, forKey: SettingsKeys.clipboardMonitorEnabled) }
+    }
+
+    // Feature 14: Obsidian
+    @Published var obsidianVaultPath: String = "" {
+        didSet { UserDefaults.standard.set(obsidianVaultPath, forKey: SettingsKeys.obsidianVaultPath) }
+    }
+
     weak var mainWindow: NSWindow?
+
+    init() {
+        let defaults = UserDefaults.standard
+        if let raw = defaults.string(forKey: SettingsKeys.layoutMode),
+           let mode = LayoutMode(rawValue: raw) {
+            layoutMode = mode
+        }
+        if let raw = defaults.string(forKey: SettingsKeys.appearanceMode),
+           let mode = AppearanceMode(rawValue: raw) {
+            appearanceMode = mode
+        }
+        isPinned = defaults.bool(forKey: SettingsKeys.isPinned)
+
+        if defaults.object(forKey: SettingsKeys.hotkeyKeyCode) != nil {
+            hotkeyKeyCode = UInt32(defaults.integer(forKey: SettingsKeys.hotkeyKeyCode))
+        }
+        if defaults.object(forKey: SettingsKeys.hotkeyModifiers) != nil {
+            hotkeyModifiers = UInt32(defaults.integer(forKey: SettingsKeys.hotkeyModifiers))
+        }
+
+        notificationsEnabled = defaults.bool(forKey: SettingsKeys.notificationsEnabled)
+        notifyOnlyWhenHidden = defaults.object(forKey: SettingsKeys.notifyOnlyWhenHidden) as? Bool ?? true
+        clipboardMonitorEnabled = defaults.bool(forKey: SettingsKeys.clipboardMonitorEnabled)
+        obsidianVaultPath = defaults.string(forKey: SettingsKeys.obsidianVaultPath) ?? ""
+    }
 
     func applyAppearance() {
         NSApp.appearance = appearanceMode.appearance
@@ -37,12 +96,8 @@ struct ContentView: View {
             // Top toolbar
             ToolbarView(appState: appState)
 
-            // Web content area
-            if appState.selectedTab == .all {
-                MultiColumnView(appState: appState)
-            } else {
-                SingleWebView(provider: appState.selectedTab)
-            }
+            // Web content area — all webviews always alive, no destroy/recreate
+            WebContentArea(appState: appState)
 
             // Sync question bar
             SyncInputBar(appState: appState)
@@ -71,6 +126,8 @@ struct ContentView: View {
 
 struct ToolbarView: View {
     @ObservedObject var appState: AppState
+    @State private var showAlert = false
+    @State private var alertMessage = ""
 
     var body: some View {
         HStack(spacing: 0) {
@@ -152,10 +209,79 @@ struct ToolbarView: View {
             }
             .buttonStyle(.plain)
             .help(appState.isPinned ? "Unpin window" : "Pin on top")
+
+            Divider()
+                .frame(height: 20)
+                .padding(.horizontal, 4)
+
+            // Export / Save menu
+            Menu {
+                Button {
+                    Task { await exportMarkdown() }
+                } label: {
+                    Label("导出 Markdown...", systemImage: "doc.text")
+                }
+
+                Button {
+                    Task { await saveToObsidian() }
+                } label: {
+                    Label("保存到 Obsidian", systemImage: "tray.and.arrow.down")
+                }
+            } label: {
+                Image(systemName: "square.and.arrow.up")
+                    .font(.system(size: 12))
+                    .frame(width: 28, height: 28)
+            }
+            .menuStyle(.borderlessButton)
+            .frame(width: 32)
+            .help("导出 / 保存")
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 4)
         .background(.ultraThinMaterial)
+        .alert("AggregateAI", isPresented: $showAlert) {
+            Button("OK") {}
+        } message: {
+            Text(alertMessage)
+        }
+    }
+
+    private func exportMarkdown() async {
+        do {
+            let provider = appState.selectedTab
+            let content = try await ExportService.shared.extractContent(from: provider)
+            let markdown = ExportService.shared.formatAsMarkdown(
+                content: content,
+                provider: provider == .all ? .all : provider,
+                question: appState.syncQuestion.isEmpty ? nil : appState.syncQuestion
+            )
+            ExportService.shared.exportToFile(markdown: markdown)
+        } catch {
+            alertMessage = "导出失败: \(error.localizedDescription)"
+            showAlert = true
+        }
+    }
+
+    private func saveToObsidian() async {
+        do {
+            if appState.selectedTab == .all {
+                try await ObsidianService.shared.saveAllToVault(
+                    question: appState.syncQuestion.isEmpty ? nil : appState.syncQuestion
+                )
+            } else {
+                let content = try await ExportService.shared.extractContent(from: appState.selectedTab)
+                try ObsidianService.shared.saveToVault(
+                    content: content,
+                    provider: appState.selectedTab,
+                    question: appState.syncQuestion.isEmpty ? nil : appState.syncQuestion
+                )
+            }
+            alertMessage = "已保存到 Obsidian"
+            showAlert = true
+        } catch {
+            alertMessage = error.localizedDescription
+            showAlert = true
+        }
     }
 }
 
@@ -200,6 +326,13 @@ struct SyncInputBar: View {
             Image(systemName: "paperplane.fill")
                 .foregroundColor(.secondary)
                 .font(.system(size: 14))
+
+            if appState.clipboardMonitorEnabled {
+                Image(systemName: "doc.on.clipboard")
+                    .foregroundColor(.accentColor)
+                    .font(.system(size: 12))
+                    .help("剪贴板监听已开启")
+            }
 
             TextField(placeholderText, text: $appState.syncQuestion, onCommit: sendToAll)
                 .textFieldStyle(.plain)
@@ -249,69 +382,67 @@ struct SyncInputBar: View {
     }
 }
 
-// MARK: - Multi Column Layout
+// MARK: - Unified Web Content Area (all webviews always alive)
 
-struct MultiColumnView: View {
+struct WebContentArea: View {
     @ObservedObject var appState: AppState
 
-    private var visibleProviders: [AIProvider] {
-        let all = AIProvider.providers
-        return Array(all.prefix(appState.layoutMode.columns))
-    }
-
     var body: some View {
-        HSplitView {
-            ForEach(visibleProviders) { provider in
-                WebPanel(provider: provider)
-            }
-        }
-    }
-}
+        HStack(spacing: 0) {
+            ForEach(Array(AIProvider.providers.enumerated()), id: \.element) { index, provider in
+                let visible = isVisible(index: index, provider: provider)
 
-struct WebPanel: View {
-    let provider: AIProvider
-
-    var body: some View {
-        VStack(spacing: 0) {
-            // Panel header
-            HStack {
-                Image(systemName: provider.iconName)
-                    .foregroundColor(provider.color)
-                    .font(.system(size: 11))
-                Text(provider.displayName)
-                    .font(.system(size: 12, weight: .semibold))
-                Spacer()
-
-                // Reload button
-                Button {
-                    if let url = provider.url {
-                        WebViewManager.shared.webView(for: provider).load(URLRequest(url: url))
-                    }
-                } label: {
-                    Image(systemName: "arrow.clockwise")
-                        .font(.system(size: 10))
-                        .foregroundColor(.secondary)
+                // Divider between panels in All mode
+                if index > 0 && visible && appState.selectedTab == .all {
+                    Divider()
                 }
-                .buttonStyle(.plain)
-                .help("Reload \(provider.displayName)")
+
+                VStack(spacing: 0) {
+                    // Panel header only in All mode
+                    if visible && appState.selectedTab == .all {
+                        HStack {
+                            Image(systemName: provider.iconName)
+                                .foregroundColor(provider.color)
+                                .font(.system(size: 11))
+                            Text(provider.displayName)
+                                .font(.system(size: 12, weight: .semibold))
+                            Spacer()
+
+                            Button {
+                                if let url = provider.url {
+                                    WebViewManager.shared.webView(for: provider).load(URLRequest(url: url))
+                                }
+                            } label: {
+                                Image(systemName: "arrow.clockwise")
+                                    .font(.system(size: 10))
+                                    .foregroundColor(.secondary)
+                            }
+                            .buttonStyle(.plain)
+                            .help("Reload \(provider.displayName)")
+                        }
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(Color(nsColor: .controlBackgroundColor))
+
+                        Divider()
+                    }
+
+                    PersistentWebView(provider: provider)
+                }
+                .frame(
+                    minWidth: visible && appState.selectedTab == .all ? 280 : 0,
+                    maxWidth: visible ? .infinity : 0
+                )
+                .clipped()
+                .allowsHitTesting(visible)
             }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
-            .background(Color(nsColor: .controlBackgroundColor))
-
-            Divider()
-
-            // WebView
-            PersistentWebView(provider: provider)
         }
-        .frame(minWidth: 280)
     }
-}
 
-struct SingleWebView: View {
-    let provider: AIProvider
-
-    var body: some View {
-        PersistentWebView(provider: provider)
+    private func isVisible(index: Int, provider: AIProvider) -> Bool {
+        if appState.selectedTab == .all {
+            return index < appState.layoutMode.columns
+        }
+        return appState.selectedTab == provider
     }
 }

@@ -5,7 +5,7 @@ import OSLog
 // MARK: - Persistent WebView Manager
 
 @MainActor
-final class WebViewManager: NSObject, WKNavigationDelegate {
+final class WebViewManager: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
     static let shared = WebViewManager()
 
     private var webViews: [AIProvider: WKWebView] = [:]
@@ -16,6 +16,7 @@ final class WebViewManager: NSObject, WKNavigationDelegate {
     private let multiProviderDispatchInterval: TimeInterval = 0.6
     private let sendCooldown: TimeInterval = 0.7
     private var lastSyncedAppearanceMode: AppearanceMode?
+    private static let notifyMessageName = "aggregateaiNotify"
 
     private override init() {}
 
@@ -74,6 +75,10 @@ final class WebViewManager: NSObject, WKNavigationDelegate {
                 )
             )
         }
+
+        // Register notification message handler
+        contentController.add(self, name: WebViewManager.notifyMessageName)
+
         config.userContentController = contentController
 
         let webView = WKWebView(frame: .zero, configuration: config)
@@ -125,6 +130,11 @@ final class WebViewManager: NSObject, WKNavigationDelegate {
             sendQuestionToChatGPT(question, in: webView)
         case .all:
             break
+        }
+
+        // Inject response observer for notification
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+            self.injectResponseObserver(for: provider)
         }
 
         return sendCooldown
@@ -546,6 +556,98 @@ final class WebViewManager: NSObject, WKNavigationDelegate {
         }
     }
 
+    // MARK: - WKScriptMessageHandler (Notification Support)
+
+    nonisolated func userContentController(
+        _ userContentController: WKUserContentController,
+        didReceive message: WKScriptMessage
+    ) {
+        guard message.name == WebViewManager.notifyMessageName else { return }
+
+        DispatchQueue.main.async {
+            guard let body = message.body as? [String: Any],
+                  let event = body["event"] as? String,
+                  event == "response_complete",
+                  let preview = body["preview"] as? String,
+                  let providerName = body["provider"] as? String else {
+                return
+            }
+
+            let provider: AIProvider
+            switch providerName {
+            case "gemini": provider = .gemini
+            case "grok": provider = .grok
+            case "chatgpt": provider = .chatgpt
+            default: return
+            }
+
+            NotificationService.shared.sendNotification(provider: provider, preview: preview)
+        }
+    }
+
+    /// Inject MutationObserver JS to detect when AI finishes responding
+    func injectResponseObserver(for provider: AIProvider) {
+        guard let webView = webViews[provider] else { return }
+        let providerName = provider.rawValue
+        let js = """
+        (function() {
+            if (window.__aggregateai_observer) {
+                window.__aggregateai_observer.disconnect();
+                window.__aggregateai_observer = null;
+            }
+            if (window.__aggregateai_debounce) {
+                clearTimeout(window.__aggregateai_debounce);
+                window.__aggregateai_debounce = null;
+            }
+
+            var DEBOUNCE_MS = 3000;
+            var started = false;
+
+            function getResponseArea() {
+                var selectors = [
+                    '[data-message-author-role="assistant"]:last-of-type',
+                    '.model-response:last-of-type',
+                    '.message-bubble:last-of-type',
+                    '[class*="response"]:last-of-type'
+                ];
+                for (var i = 0; i < selectors.length; i++) {
+                    var els = document.querySelectorAll(selectors[i]);
+                    if (els.length > 0) return els[els.length - 1];
+                }
+                return document.querySelector('main') || document.body;
+            }
+
+            setTimeout(function() {
+                var target = getResponseArea();
+                var observer = new MutationObserver(function(mutations) {
+                    started = true;
+                    if (window.__aggregateai_debounce) {
+                        clearTimeout(window.__aggregateai_debounce);
+                    }
+                    window.__aggregateai_debounce = setTimeout(function() {
+                        var text = target.textContent || '';
+                        window.webkit.messageHandlers.aggregateaiNotify.postMessage({
+                            event: 'response_complete',
+                            provider: '\(providerName)',
+                            preview: text.substring(0, 300)
+                        });
+                        observer.disconnect();
+                        window.__aggregateai_observer = null;
+                        window.__aggregateai_debounce = null;
+                    }, DEBOUNCE_MS);
+                });
+
+                observer.observe(target, { childList: true, subtree: true, characterData: true });
+                window.__aggregateai_observer = observer;
+            }, 1000);
+        })();
+        """
+        webView.evaluateJavaScript(js) { _, error in
+            if let error = error {
+                self.logger.error("Failed to inject response observer for \(provider.displayName, privacy: .public): \(error.localizedDescription, privacy: .public)")
+            }
+        }
+    }
 }
 
 // MARK: - SwiftUI WebView Wrapper
@@ -553,11 +655,23 @@ final class WebViewManager: NSObject, WKNavigationDelegate {
 struct PersistentWebView: NSViewRepresentable {
     let provider: AIProvider
 
-    func makeNSView(context: Context) -> WKWebView {
-        return WebViewManager.shared.webView(for: provider)
+    func makeNSView(context: Context) -> NSView {
+        let container = NSView()
+        container.autoresizesSubviews = true
+        reparentWebView(into: container)
+        return container
     }
 
-    func updateNSView(_ nsView: WKWebView, context: Context) {
-        // WebView is managed by WebViewManager, no updates needed
+    func updateNSView(_ nsView: NSView, context: Context) {
+        reparentWebView(into: nsView)
+    }
+
+    private func reparentWebView(into container: NSView) {
+        let webView = WebViewManager.shared.webView(for: provider)
+        guard webView.superview !== container else { return }
+        webView.removeFromSuperview()
+        webView.frame = container.bounds
+        webView.autoresizingMask = [.width, .height]
+        container.addSubview(webView)
     }
 }
