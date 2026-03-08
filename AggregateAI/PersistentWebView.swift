@@ -43,6 +43,7 @@ final class WebViewManager: NSObject, WKNavigationDelegate {
         }
 
         let config = WKWebViewConfiguration()
+        let contentController = WKUserContentController()
 
         // Persistent data store to keep cookies/login state
         let dataStore = WKWebsiteDataStore.default()
@@ -55,6 +56,25 @@ final class WebViewManager: NSObject, WKNavigationDelegate {
         let prefs = WKWebpagePreferences()
         prefs.allowsContentJavaScript = true
         config.defaultWebpagePreferences = prefs
+
+        let initialTheme = resolvedWebTheme(for: lastSyncedAppearanceMode ?? .system)
+        contentController.addUserScript(
+            WKUserScript(
+                source: buildThemeBootstrapScript(initialTheme),
+                injectionTime: .atDocumentStart,
+                forMainFrameOnly: false
+            )
+        )
+        if provider == .gemini {
+            contentController.addUserScript(
+                WKUserScript(
+                    source: buildGeminiThemeStorageBootstrapScript(initialTheme),
+                    injectionTime: .atDocumentStart,
+                    forMainFrameOnly: false
+                )
+            )
+        }
+        config.userContentController = contentController
 
         let webView = WKWebView(frame: .zero, configuration: config)
         webView.allowsBackForwardNavigationGestures = true
@@ -74,11 +94,11 @@ final class WebViewManager: NSObject, WKNavigationDelegate {
 
     func syncThemeForAllWebViews(mode: AppearanceMode = .system) {
         lastSyncedAppearanceMode = mode
+        let theme = resolvedWebTheme(for: mode)
 
         for (provider, webView) in webViews {
-            guard provider == .gemini else { continue }
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
-                self.syncGeminiTheme(in: webView, mode: mode)
+                self.applyRuntimeThemeOverride(in: webView, provider: provider, theme: theme)
             }
         }
     }
@@ -182,7 +202,7 @@ final class WebViewManager: NSObject, WKNavigationDelegate {
             .replacingOccurrences(of: "\r", with: "")
     }
 
-    private func resolvedGeminiTheme(for mode: AppearanceMode) -> String {
+    private func resolvedWebTheme(for mode: AppearanceMode) -> String {
         switch mode {
         case .light:
             return "light"
@@ -194,201 +214,171 @@ final class WebViewManager: NSObject, WKNavigationDelegate {
         }
     }
 
-    private func syncGeminiTheme(in webView: WKWebView, mode: AppearanceMode) {
-        let theme = resolvedGeminiTheme(for: mode)
-        evaluate(buildGeminiThemeScript(theme), in: webView, provider: .gemini)
+    private func applyRuntimeThemeOverride(in webView: WKWebView, provider: AIProvider, theme: String) {
+        evaluate(buildRuntimeThemeOverrideScript(theme), in: webView, provider: provider)
     }
 
-    private func buildGeminiThemeScript(_ theme: String) -> String {
+    private func buildThemeBootstrapScript(_ theme: String) -> String {
+        return """
+        (function() {
+            const desiredTheme = "\(theme)";
+            const prefersDark = desiredTheme === 'dark';
+            const originalMatchMedia = window.matchMedia ? window.matchMedia.bind(window) : null;
+
+            function stubMatchMedia(query) {
+                const media = String(query || '');
+                const isColorSchemeQuery = media.includes('prefers-color-scheme');
+                const matches = isColorSchemeQuery
+                    ? (media.includes('dark') ? prefersDark : media.includes('light') ? !prefersDark : false)
+                    : (originalMatchMedia ? originalMatchMedia(media).matches : false);
+
+                return {
+                    matches,
+                    media,
+                    onchange: null,
+                    addListener() {},
+                    removeListener() {},
+                    addEventListener() {},
+                    removeEventListener() {},
+                    dispatchEvent() { return false; }
+                };
+            }
+
+            try {
+                Object.defineProperty(window, 'matchMedia', {
+                    configurable: true,
+                    value(query) {
+                        return stubMatchMedia(query);
+                    }
+                });
+            } catch (_) {
+                window.matchMedia = stubMatchMedia;
+            }
+
+            try {
+                document.documentElement.style.setProperty('color-scheme', desiredTheme, 'important');
+                document.documentElement.dataset.aggregateaiTheme = desiredTheme;
+            } catch (_) {}
+        })();
+        """
+    }
+
+    private func buildRuntimeThemeOverrideScript(_ theme: String) -> String {
         return """
         (function() {
             try {
                 const desiredTheme = "\(theme)";
-                const wantsDark = desiredTheme === 'dark';
-                let openedSettingsMenu = false;
-                let openedThemeMenu = false;
-                let attempts = 0;
+                const root = document.documentElement;
+                const body = document.body;
+                const prefersDark = desiredTheme === 'dark';
 
-                function isVisible(el) {
-                    if (!el) return false;
-                    const rect = el.getBoundingClientRect();
-                    const style = window.getComputedStyle(el);
-                    return rect.width > 0 && rect.height > 0 &&
-                        style.display !== 'none' && style.visibility !== 'hidden';
+                if (root) {
+                    root.style.setProperty('color-scheme', desiredTheme, 'important');
+                    root.dataset.aggregateaiTheme = desiredTheme;
+                    root.dataset.theme = desiredTheme;
+                    root.classList.toggle('dark', prefersDark);
+                    root.classList.toggle('light', !prefersDark);
+                    root.classList.toggle('dark-theme', prefersDark);
+                    root.classList.toggle('light-theme', !prefersDark);
                 }
 
-                function click(el) {
-                    if (!el) return false;
-                    el.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
-                    el.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
-                    el.click();
-                    return true;
+                if (body) {
+                    body.style.setProperty('color-scheme', desiredTheme, 'important');
+                    body.dataset.aggregateaiTheme = desiredTheme;
+                    body.dataset.theme = desiredTheme;
+                    body.classList.toggle('dark', prefersDark);
+                    body.classList.toggle('light', !prefersDark);
+                    body.classList.toggle('dark-theme', prefersDark);
+                    body.classList.toggle('light-theme', !prefersDark);
                 }
 
-                function normalizedText(el) {
-                    return [
-                        el?.textContent || '',
-                        el?.innerText || '',
-                        el?.getAttribute?.('aria-label') || '',
-                        el?.getAttribute?.('title') || ''
-                    ].join(' ').replace(/\\s+/g, ' ').trim().toLowerCase();
-                }
+                window.dispatchEvent(new CustomEvent('aggregateai:theme-changed', {
+                    detail: { theme: desiredTheme }
+                }));
 
-                function applyThemeToRoot() {
-                    const root = document.querySelector(':root') || document.documentElement;
-                    if (root) {
-                        root.dataset.theme = desiredTheme;
-                    }
-                    if (document.body) {
-                        document.body.dataset.theme = desiredTheme;
-                    }
-
-                    const message = { type: 'APPLY_THEME', theme: desiredTheme };
-                    try {
-                        window.postMessage(message, '*');
-                    } catch (_) {}
-                    try {
-                        window.dispatchEvent(new MessageEvent('message', { data: message }));
-                    } catch (_) {}
-                }
-
-                function findInSelectors(selectors) {
-                    for (const selector of selectors) {
-                        const match = Array.from(document.querySelectorAll(selector)).find(isVisible);
-                        if (match) return match;
-                    }
-                    return null;
-                }
-
-                function settingsButton() {
-                    return findInSelectors([
-                        '[data-test-id="settings-and-help-button"]',
-                        '[data-test-id="mobile-settings-and-help-control"]'
-                    ]);
-                }
-
-                function themeMenuButton() {
-                    return findInSelectors([
-                        '[data-test-id="desktop-theme-menu-button"]',
-                        '[data-test-id="theme-menu-item"]'
-                    ]);
-                }
-
-                function explicitThemeOption() {
-                    const mobileSelector = wantsDark
-                        ? '[data-test-id="mobile-theme-dark"]'
-                        : '[data-test-id="mobile-theme-light"]';
-                    const mobile = findInSelectors([mobileSelector]);
-                    if (mobile) return mobile;
-
-                    const optionNeedles = wantsDark
-                        ? ['dark', 'dark theme', '深色', '深色模式']
-                        : ['light', 'light theme', '浅色', '浅色模式'];
-
-                    return Array.from(document.querySelectorAll('[role="menuitemradio"], [role="option"], mat-menu-item'))
-                        .find((el) => isVisible(el) && optionNeedles.some((needle) => normalizedText(el).includes(needle))) || null;
-                }
-
-                function darkToggle() {
-                    return findInSelectors([
-                        '[data-test-id="bard-dark-theme-toggle"] [role="switch"]',
-                        '[data-test-id="bard-dark-theme-toggle"] [aria-label*="dark theme"]',
-                        '[data-test-id="bard-dark-theme-toggle"] [aria-label*="Dark theme"]',
-                        '[data-test-id="bard-dark-theme-toggle"] [aria-label*="深色主题"]',
-                        '[data-test-id="bard-dark-theme-toggle"] [aria-checked]',
-                        '[data-test-id="bard-dark-theme-toggle"] input[type="checkbox"]',
-                        '[data-test-id="bard-dark-theme-toggle"]'
-                    ]);
-                }
-
-                function readChecked(el) {
-                    if (!el) return null;
-                    if (el.hasAttribute('aria-checked')) {
-                        return el.getAttribute('aria-checked') === 'true';
-                    }
-                    if ('checked' in el && typeof el.checked === 'boolean') {
-                        return el.checked;
-                    }
-                    const descendant = el.querySelector?.('[aria-checked], input[type="checkbox"]');
-                    if (descendant) {
-                        return readChecked(descendant);
-                    }
-                    return null;
-                }
-
-                function closeMenu() {
-                    document.dispatchEvent(new KeyboardEvent('keydown', {
-                        key: 'Escape',
-                        code: 'Escape',
-                        bubbles: true
-                    }));
-                }
-
-                function syncTheme() {
-                    attempts += 1;
-                    applyThemeToRoot();
-
-                    const option = explicitThemeOption();
-                    const optionChecked = readChecked(option);
-
-                    if (option && optionChecked !== null) {
-                        const shouldClick = optionChecked !== true;
-                        if (!shouldClick) {
-                            closeMenu();
-                            return;
-                        }
-
-                        click(option);
-                        setTimeout(closeMenu, 80);
-                        return;
-                    }
-
-                    if (option) {
-                        click(option);
-                        setTimeout(closeMenu, 80);
-                        return;
-                    }
-
-                    const toggle = darkToggle();
-                    const toggleChecked = readChecked(toggle);
-                    if (toggle && toggleChecked !== null) {
-                        if (toggleChecked !== wantsDark) {
-                            click(toggle.closest('[data-test-id="bard-dark-theme-toggle"]') || toggle);
-                        }
-                        setTimeout(closeMenu, 80);
-                        return;
-                    }
-
-                    if (toggle) {
-                        click(toggle.closest('[data-test-id="bard-dark-theme-toggle"]') || toggle);
-                        setTimeout(closeMenu, 80);
-                        return;
-                    }
-
-                    if (openedSettingsMenu && !openedThemeMenu) {
-                        const themeButton = themeMenuButton();
-                        if (themeButton) {
-                            openedThemeMenu = click(themeButton);
-                        }
-                    }
-
-                    if (!openedSettingsMenu) {
-                        const button = settingsButton();
-                        if (button) {
-                            openedSettingsMenu = click(button);
-                        }
-                    }
-
-                    if (attempts < 10) {
-                        setTimeout(syncTheme, 180);
-                    }
-                }
-
-                syncTheme();
-                return 'gemini:theme_\(theme)_scheduled';
+                return 'theme_override_' + desiredTheme;
             } catch (e) {
-                return 'gemini:theme_\(theme)_error';
+                return 'theme_override_error';
             }
+        })();
+        """
+    }
+
+    private func buildGeminiThemeStorageBootstrapScript(_ theme: String) -> String {
+        return """
+        (function() {
+            const desiredTheme = "\(theme)";
+            const wantsDark = desiredTheme === 'dark';
+            const themeRegex = /(theme|appearance|color.?scheme|dark)/i;
+
+            function normalizedValue(value) {
+                if (value == null) return desiredTheme;
+                const stringValue = String(value);
+
+                if (stringValue === 'true' || stringValue === 'false') {
+                    return wantsDark ? 'true' : 'false';
+                }
+
+                if (/dark/i.test(stringValue) || /light/i.test(stringValue)) {
+                    return stringValue
+                        .replace(/dark/gi, desiredTheme)
+                        .replace(/light/gi, desiredTheme);
+                }
+
+                return desiredTheme;
+            }
+
+            function patchStorage(storage) {
+                if (!storage) return;
+
+                try {
+                    for (let index = 0; index < storage.length; index += 1) {
+                        const key = storage.key(index);
+                        if (!key || !themeRegex.test(key)) continue;
+                        const currentValue = storage.getItem(key);
+                        storage.setItem(key, normalizedValue(currentValue));
+                    }
+                } catch (_) {}
+
+                const originalGetItem = storage.getItem.bind(storage);
+                const originalSetItem = storage.setItem.bind(storage);
+
+                storage.getItem = function(key) {
+                    const value = originalGetItem(key);
+                    return themeRegex.test(String(key || '')) ? normalizedValue(value) : value;
+                };
+
+                storage.setItem = function(key, value) {
+                    const patchedValue = themeRegex.test(String(key || ''))
+                        ? normalizedValue(value)
+                        : value;
+                    return originalSetItem(key, patchedValue);
+                };
+            }
+
+            function patchCookies() {
+                const cookieNames = [
+                    'theme',
+                    'appearance',
+                    'color_scheme',
+                    'color-scheme',
+                    'dark_mode',
+                    'darkmode'
+                ];
+
+                for (const name of cookieNames) {
+                    try {
+                        document.cookie = `${name}=${desiredTheme}; path=/; SameSite=Lax`;
+                    } catch (_) {}
+                }
+            }
+
+            try {
+                patchStorage(window.localStorage);
+                patchStorage(window.sessionStorage);
+                patchCookies();
+                document.documentElement.dataset.aggregateaiGeminiTheme = desiredTheme;
+            } catch (_) {}
         })();
         """
     }
@@ -546,9 +536,8 @@ final class WebViewManager: NSObject, WKNavigationDelegate {
             return
         }
 
-        if provider == .gemini {
-            syncGeminiTheme(in: webView, mode: lastSyncedAppearanceMode ?? .system)
-        }
+        let theme = resolvedWebTheme(for: lastSyncedAppearanceMode ?? .system)
+        applyRuntimeThemeOverride(in: webView, provider: provider, theme: theme)
 
         if let question = pendingQuestions.removeValue(forKey: provider) {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {

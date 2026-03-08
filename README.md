@@ -120,7 +120,7 @@ AggregateAI/
 
 | AI | User-Agent | 原因 |
 |----|-----------|------|
-| Gemini | Chrome UA | Safari UA 下回复异常 |
+| Gemini | Safari UA | 保持与其他面板一致的外观体验 |
 | Grok | Safari UA | Chrome UA 触发 Cloudflare 验证 |
 | ChatGPT | Safari UA | Chrome UA 触发 Cloudflare 验证 |
 

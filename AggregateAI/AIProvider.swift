@@ -80,7 +80,7 @@ struct UserAgentSettings: Equatable {
 
     static let recommended = UserAgentSettings(
         defaultProfile: .safari,
-        providerOverrides: [.gemini: .chrome]
+        providerOverrides: [:]
     )
 
     func profile(for provider: AIProvider) -> UserAgentProfile {
