@@ -2,10 +2,14 @@ import Cocoa
 import SwiftUI
 import Carbon.HIToolbox
 
-class AppDelegate: NSObject, NSApplicationDelegate {
+@MainActor
+final class AppDelegate: NSObject, NSApplicationDelegate {
+    private let appState = AppState()
     private var statusItem: NSStatusItem!
+    private let statusMenu = NSMenu()
     private var mainWindow: NSWindow?
     private var hotKeyRef: EventHotKeyRef?
+    private var hotKeyHandlerRef: EventHandlerRef?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Hide dock icon
@@ -21,18 +25,29 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         // Build right-click menu
-        let menu = NSMenu()
-        menu.addItem(withTitle: "显示主窗口", action: #selector(showWindow), keyEquivalent: "")
-        menu.addItem(NSMenuItem.separator())
-        menu.addItem(withTitle: "退出应用 (Exit)", action: #selector(quitApp), keyEquivalent: "q")
-        statusItem.menu = nil // Don't set menu by default (left click opens window)
+        let showWindowItem = NSMenuItem(title: "显示主窗口", action: #selector(showWindow), keyEquivalent: "")
+        showWindowItem.target = self
+        statusMenu.addItem(showWindowItem)
 
-        // Store menu for right-click
-        statusItem.button?.tag = 0
-        objc_setAssociatedObject(self, "statusMenu", menu, .OBJC_ASSOCIATION_RETAIN)
+        let gmailItem = NSMenuItem(title: "Gmail 邮箱", action: #selector(openGmail), keyEquivalent: "")
+        gmailItem.target = self
+        statusMenu.addItem(gmailItem)
+
+        statusMenu.addItem(NSMenuItem.separator())
+
+        let quitItem = NSMenuItem(title: "退出应用 (Exit)", action: #selector(quitApp), keyEquivalent: "q")
+        quitItem.target = self
+        statusMenu.addItem(quitItem)
+
+        statusItem.menu = nil // Don't set menu by default (left click opens window)
 
         // Register global hotkey: Cmd+Shift+A
         registerGlobalHotKey()
+
+        // Auto show main window on launch
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+            self.showWindow()
+        }
     }
 
     @objc func handleStatusItemClick() {
@@ -43,13 +58,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         if event.type == .rightMouseUp {
             // Right click: show menu
-            if let menu = objc_getAssociatedObject(self, "statusMenu") as? NSMenu {
-                statusItem.menu = menu
-                statusItem.button?.performClick(nil)
-                // Reset menu to nil so left click works normally next time
-                DispatchQueue.main.async {
-                    self.statusItem.menu = nil
-                }
+            statusItem.menu = statusMenu
+            statusItem.button?.performClick(nil)
+            // Reset menu to nil so left click works normally next time
+            DispatchQueue.main.async {
+                self.statusItem.menu = nil
             }
         } else {
             // Left click: toggle window
@@ -67,7 +80,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func showWindow() {
         if mainWindow == nil {
-            let contentView = ContentView()
+            let contentView = ContentView(appState: appState)
             let window = NSWindow(
                 contentRect: NSRect(x: 0, y: 0, width: 1400, height: 900),
                 styleMask: [.titled, .closable, .resizable, .miniaturizable],
@@ -80,10 +93,26 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             window.isReleasedWhenClosed = false
             window.setFrameAutosaveName("AggregateAIMainWindow")
             mainWindow = window
+            appState.attachMainWindow(window)
         }
 
         mainWindow?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        if let hotKeyRef {
+            UnregisterEventHotKey(hotKeyRef)
+        }
+        if let hotKeyHandlerRef {
+            RemoveEventHandler(hotKeyHandlerRef)
+        }
+    }
+
+    @objc private func openGmail() {
+        if let url = URL(string: "https://mail.google.com") {
+            NSWorkspace.shared.open(url)
+        }
     }
 
     @objc private func quitApp() {
@@ -102,16 +131,27 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         eventType.eventKind = UInt32(kEventHotKeyPressed)
 
         let refcon = Unmanaged.passUnretained(self).toOpaque()
-        InstallEventHandler(GetApplicationEventTarget(), { (_, event, refcon) -> OSStatus in
+        let handlerStatus = InstallEventHandler(GetApplicationEventTarget(), { (_, _, refcon) -> OSStatus in
             guard let refcon = refcon else { return OSStatus(eventNotHandledErr) }
             let delegate = Unmanaged<AppDelegate>.fromOpaque(refcon).takeUnretainedValue()
             DispatchQueue.main.async {
                 delegate.toggleWindow()
             }
             return noErr
-        }, 1, &eventType, refcon, nil)
+        }, 1, &eventType, refcon, &hotKeyHandlerRef)
 
         // Cmd+Shift+A: keycode 0 = 'A'
-        RegisterEventHotKey(UInt32(kVK_ANSI_A), UInt32(cmdKey | shiftKey), hotKeyID, GetApplicationEventTarget(), 0, &hotKeyRef)
+        let hotKeyStatus = RegisterEventHotKey(
+            UInt32(kVK_ANSI_A),
+            UInt32(cmdKey | shiftKey),
+            hotKeyID,
+            GetApplicationEventTarget(),
+            0,
+            &hotKeyRef
+        )
+
+        if handlerStatus != noErr || hotKeyStatus != noErr {
+            NSLog("Failed to register AggregateAI global hotkey. handlerStatus=%d hotKeyStatus=%d", handlerStatus, hotKeyStatus)
+        }
     }
 }

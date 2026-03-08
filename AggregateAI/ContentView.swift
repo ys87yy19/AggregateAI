@@ -2,22 +2,35 @@ import SwiftUI
 
 // MARK: - App State
 
-class AppState: ObservableObject {
+@MainActor
+final class AppState: ObservableObject {
     @Published var selectedTab: AIProvider = .all
     @Published var layoutMode: LayoutMode = .threeColumn
     @Published var appearanceMode: AppearanceMode = .system
     @Published var isPinned: Bool = false
     @Published var syncQuestion: String = ""
+    @Published var userAgentSettings = UserAgentSettings.recommended
+
+    weak var mainWindow: NSWindow?
 
     func applyAppearance() {
         NSApp.appearance = appearanceMode.appearance
+    }
+
+    func attachMainWindow(_ window: NSWindow) {
+        mainWindow = window
+        updateWindowLevel()
+    }
+
+    func updateWindowLevel() {
+        mainWindow?.level = isPinned ? .floating : .normal
     }
 }
 
 // MARK: - Content View
 
 struct ContentView: View {
-    @StateObject private var appState = AppState()
+    @ObservedObject var appState: AppState
 
     var body: some View {
         VStack(spacing: 0) {
@@ -35,13 +48,21 @@ struct ContentView: View {
             SyncInputBar(appState: appState)
         }
         .frame(minWidth: 900, minHeight: 600)
+        .onAppear {
+            appState.applyAppearance()
+            WebViewManager.shared.updateUserAgentSettings(appState.userAgentSettings)
+            WebViewManager.shared.preloadWebViews()
+            WebViewManager.shared.syncThemeForAllWebViews(mode: appState.appearanceMode)
+        }
         .onChange(of: appState.appearanceMode) { _ in
             appState.applyAppearance()
+            WebViewManager.shared.syncThemeForAllWebViews(mode: appState.appearanceMode)
         }
-        .onChange(of: appState.isPinned) { pinned in
-            if let window = NSApp.windows.first(where: { $0.title == "AggregateAI" }) {
-                window.level = pinned ? .floating : .normal
-            }
+        .onChange(of: appState.isPinned) { _ in
+            appState.updateWindowLevel()
+        }
+        .onChange(of: appState.userAgentSettings) { _ in
+            WebViewManager.shared.updateUserAgentSettings(appState.userAgentSettings)
         }
     }
 }
@@ -167,13 +188,20 @@ struct SyncInputBar: View {
     @ObservedObject var appState: AppState
     @State private var isSending = false
 
+    private var placeholderText: String {
+        if appState.selectedTab == .all {
+            return "Ask all AIs at once..."
+        }
+        return "Ask \(appState.selectedTab.displayName)..."
+    }
+
     var body: some View {
         HStack(spacing: 8) {
             Image(systemName: "paperplane.fill")
                 .foregroundColor(.secondary)
                 .font(.system(size: 14))
 
-            TextField("Ask all AIs at once...", text: $appState.syncQuestion, onCommit: sendToAll)
+            TextField(placeholderText, text: $appState.syncQuestion, onCommit: sendToAll)
                 .textFieldStyle(.plain)
                 .font(.system(size: 14))
 
@@ -206,15 +234,16 @@ struct SyncInputBar: View {
         guard !appState.syncQuestion.isEmpty else { return }
         isSending = true
         let question = appState.syncQuestion
+        let cooldown: TimeInterval
 
         if appState.selectedTab == .all {
-            WebViewManager.shared.sendQuestionToAll(question)
+            cooldown = WebViewManager.shared.sendQuestionToAll(question)
         } else {
-            WebViewManager.shared.sendQuestion(question, to: appState.selectedTab)
+            cooldown = WebViewManager.shared.sendQuestion(question, to: appState.selectedTab)
         }
 
         appState.syncQuestion = ""
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + cooldown) {
             isSending = false
         }
     }

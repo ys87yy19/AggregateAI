@@ -49,6 +49,43 @@ enum AIProvider: String, CaseIterable, Identifiable {
     static var providers: [AIProvider] {
         return [.gemini, .grok, .chatgpt]
     }
+
+    var requiresLoadedWebAppForSending: Bool {
+        switch self {
+        case .gemini, .chatgpt:
+            return true
+        case .all, .grok:
+            return false
+        }
+    }
+}
+
+enum UserAgentProfile: String {
+    case safari
+    case chrome
+
+    var userAgentString: String {
+        switch self {
+        case .safari:
+            return "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15"
+        case .chrome:
+            return "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+        }
+    }
+}
+
+struct UserAgentSettings: Equatable {
+    var defaultProfile: UserAgentProfile = .safari
+    var providerOverrides: [AIProvider: UserAgentProfile] = [:]
+
+    static let recommended = UserAgentSettings(
+        defaultProfile: .safari,
+        providerOverrides: [.gemini: .chrome]
+    )
+
+    func profile(for provider: AIProvider) -> UserAgentProfile {
+        providerOverrides[provider] ?? defaultProfile
+    }
 }
 
 // MARK: - Layout Mode
