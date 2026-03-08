@@ -1,135 +1,162 @@
 # AggregateAI
 
-一款 macOS 菜单栏应用，将 Gemini、Grok、ChatGPT 三大 AI 聚合在一个窗口中，支持同步提问、多栏布局、主题切换等功能。
+`AggregateAI` 是一个 macOS 菜单栏应用，把 Gemini、Grok、ChatGPT 放进同一个窗口里，方便并排查看、快速切换和同步提问。
 
-## 功能特性
+应用使用 `SwiftUI + AppKit + WKWebView` 实现，适合个人自用、对比多家 AI 回复，或者作为本地桌面聚合器继续扩展。
 
-### 核心功能
+## 功能概览
 
-- **三合一 AI 聚合** — 在一个窗口中同时使用 Gemini、Grok、ChatGPT
-- **同步提问** — 底部输入栏输入问题，一键同时发送给所有 AI，对比不同 AI 的回答
-- **菜单栏常驻** — 应用运行在菜单栏，不占用 Dock 栏位置，点击图标即可唤出
-- **全局快捷键** — `Cmd+Shift+A` 随时唤出/隐藏窗口
+- 菜单栏常驻，默认不占用 Dock
+- 支持 `All / Gemini / Grok / ChatGPT` 四个标签
+- 支持 `1 / 2 / 3` 栏布局切换
+- 支持同步提问
+- 支持窗口置顶
+- 支持 `System / Light / Dark` 三种主题模式
+- 登录状态持久化，关闭后无需反复登录
+- 支持 `Cmd+Shift+A` 全局快捷键显示/隐藏主窗口
 
-### 界面功能
-
-- **多栏布局切换** — 支持 1 栏 / 2 栏 / 3 栏自由切换
-- **标签页切换** — 顶部标签栏可切换 All（全部）或单独查看某个 AI
-- **窗口置顶** — 点击 Pin 按钮，窗口始终悬浮在最上层
-- **主题切换** — 支持 System（跟随系统）/ Light / Dark 三种外观模式
-- **面板刷新** — 每个 AI 面板标题栏有独立刷新按钮
-- **可调节分栏** — 拖拽面板边界调整各 AI 的显示宽度
-- **登录状态持久化** — 使用 WKWebsiteDataStore 保持 Cookie，无需重复登录
-
-## 系统要求
-
-- macOS 13.0 (Ventura) 或更高版本
-- Xcode 15.0 或更高版本
-- Apple Silicon 或 Intel Mac
-
-## 安装与构建
-
-### 方式一：Xcode 打开
-
-```bash
-open /path/to/AggregateAI/AggregateAI.xcodeproj
-```
-
-然后按 `Cmd+R` 运行。
-
-### 方式二：命令行构建
-
-```bash
-cd /path/to/AggregateAI
-xcodebuild -project AggregateAI.xcodeproj -scheme AggregateAI -configuration Release build
-```
-
-构建产物在 `~/Library/Developer/Xcode/DerivedData/AggregateAI-*/Build/Products/Release/AggregateAI.app`
-
-## 使用说明
-
-### 基本操作
-
-1. 启动应用后，菜单栏会出现一个大脑图标
-2. 点击图标或按 `Cmd+Shift+A` 打开主窗口
-3. 默认显示三栏布局，同时展示 Gemini、Grok、ChatGPT
-4. 点击顶部标签可单独查看某个 AI
+## 当前行为
 
 ### 同步提问
 
-1. 在底部输入栏输入你的问题
-2. 按 `Enter` 或点击发送按钮
-3. 在 "All" 视图下，问题会同时发送给所有 AI
-4. 在单个标签视图下，问题只发送给当前 AI
+- 在 `All` 视图下，底部输入框会依次把同一个问题发送给全部 AI
+- 在单个标签页下，只会发送给当前 AI
+- 即使当前是 `1` 栏或 `2` 栏布局，`All` 模式也会预加载全部 provider，避免只给可见面板发送
+- `Cmd+Return` 可直接发送
 
-### 快捷键
+### 布局与窗口
 
-| 快捷键 | 功能 |
-|--------|------|
-| `Cmd+Shift+A` | 全局唤出/隐藏窗口 |
-| `Cmd+Return` | 发送同步提问 |
+- 顶部工具栏支持切换 `1 / 2 / 3` 栏布局
+- `Pin` 按钮可将窗口切为浮动层级
+- 左键点击菜单栏图标会切换主窗口显示状态
+- 右键点击菜单栏图标会打开快捷菜单：
+  - 显示主窗口
+  - Gmail 邮箱
+  - 退出应用
 
-### 工具栏按钮
+### 主题
 
-| 按钮 | 功能 |
-|------|------|
-| All / Gemini / Grok / ChatGPT | 切换标签页 |
-| 布局图标（1/2/3栏） | 切换多栏布局 |
-| 太阳/月亮图标 | 切换主题（System/Light/Dark） |
-| Pin 图标 | 窗口置顶开关 |
+- 应用窗口外壳跟随 `System / Light / Dark`
+- Grok、ChatGPT 和 Gemini 面板会收到统一的主题提示
+- Gemini 额外做了本地主题存储修正，避免和应用主题严重跑偏
 
-## 项目结构
+说明：
+第三方站点最终如何渲染，仍然取决于它们自己的前端逻辑，所以网页内主题同步属于“尽量保持一致”，不是完全可控。
 
-```
-AggregateAI/
-├── AggregateAI.xcodeproj/       # Xcode 项目配置
-│   └── project.pbxproj
-└── AggregateAI/
-    ├── AggregateAIApp.swift      # 应用入口，SwiftUI App 生命周期
-    ├── AppDelegate.swift         # 菜单栏图标、窗口管理、全局快捷键注册
-    ├── AIProvider.swift          # AI 提供商枚举、布局模式、外观模式定义
-    ├── ContentView.swift         # 主界面：工具栏、标签页、多栏布局、同步输入栏
-    ├── PersistentWebView.swift   # WebView 管理器：创建/复用 WKWebView，JS 注入同步提问
-    ├── AggregateAI.entitlements  # 应用权限（沙盒、网络）
-    └── Assets.xcassets/          # 图标资源
-```
+## User-Agent 策略
+
+当前三个 provider 默认都使用 Safari User-Agent：
+
+| Provider | User-Agent |
+|----------|------------|
+| Gemini | Safari |
+| Grok | Safari |
+| ChatGPT | Safari |
+
+这样做的目的是尽量保持站点渲染一致，减少因浏览器身份不同导致的主题、验证或页面结构差异。
 
 ## 技术实现
 
 ### 架构
 
-- **SwiftUI + AppKit 混合** — SwiftUI 构建 UI，AppKit 管理菜单栏和窗口
-- **WKWebView** — 每个 AI 使用独立的 WKWebView 实例，通过 WebViewManager 单例管理
-- **NSViewRepresentable** — 将 WKWebView 桥接到 SwiftUI
+- `AggregateAIApp.swift`
+  - SwiftUI 应用入口
+- `AppDelegate.swift`
+  - 菜单栏图标、主窗口、全局快捷键、右键菜单
+- `ContentView.swift`
+  - 主界面状态、标签栏、布局切换、主题切换、同步输入栏
+- `PersistentWebView.swift`
+  - `WKWebView` 复用、登录态持久化、同步提问注入、主题同步
+- `AIProvider.swift`
+  - provider 枚举、布局模式、主题模式、User-Agent 配置
 
-### 同步提问实现
+### WebView 管理
 
-不同 AI 采用不同的注入策略：
+- 每个 AI provider 对应一个长期复用的 `WKWebView`
+- 使用 `WKWebsiteDataStore.default()` 保留 Cookie 和站点数据
+- 应用启动后会预加载所有 provider，减少首次发送时的空白或丢发问题
 
-| AI | 方式 | 说明 |
-|----|------|------|
-| Gemini | JS 注入 | DataTransfer 模拟粘贴 + 按钮点击 |
-| Grok | URL 导航 | 通过 `grok.com/?q=问题` 直接发起对话 |
-| ChatGPT | JS 注入 | innerHTML 设值 + 发送按钮点击 |
+### 提问策略
 
-各 AI 之间间隔 0.6 秒依次执行，避免冲突。
+| Provider | 方式 | 说明 |
+|----------|------|------|
+| Gemini | JavaScript 注入 | 定位输入框与发送按钮后自动发送 |
+| Grok | URL 导航 | 通过 `https://grok.com/?q=...` 发起提问 |
+| ChatGPT | JavaScript 注入 | 向输入框写入内容后触发发送 |
 
-### User-Agent 策略
+## 系统要求
 
-为避免兼容性问题，不同 AI 使用不同的 User-Agent：
+- macOS 13.0 及以上
+- Xcode 15 或更高版本
 
-| AI | User-Agent | 原因 |
-|----|-----------|------|
-| Gemini | Safari UA | 保持与其他面板一致的外观体验 |
-| Grok | Safari UA | Chrome UA 触发 Cloudflare 验证 |
-| ChatGPT | Safari UA | Chrome UA 触发 Cloudflare 验证 |
+## 运行方式
 
-## 已知问题
+### 使用 Xcode
 
-- Grok 在部分网络环境下可能出现"无法完成回复"，这是 Grok 服务端的限制，非应用问题
-- 首次使用需要在各 AI 面板中分别登录账号
-- 同步提问依赖各 AI 网页的 DOM 结构，网站更新后可能需要适配
+```bash
+open AggregateAI.xcodeproj
+```
+
+然后直接运行 `AggregateAI` scheme。
+
+### 命令行构建
+
+```bash
+xcodebuild -project AggregateAI.xcodeproj -scheme AggregateAI -configuration Debug build
+```
+
+Debug 构建产物通常位于：
+
+```bash
+~/Library/Developer/Xcode/DerivedData/AggregateAI-*/Build/Products/Debug/AggregateAI.app
+```
+
+## 使用说明
+
+1. 首次启动后，分别在 Gemini、Grok、ChatGPT 面板中登录账号
+2. 点击顶部标签切换单个 AI 或 `All`
+3. 在底部输入框中输入问题
+4. 按 `Enter`、`Cmd+Return` 或点击发送按钮
+5. 用顶部布局按钮切换并排查看方式
+
+## 快捷键
+
+| 快捷键 | 作用 |
+|--------|------|
+| `Cmd+Shift+A` | 显示 / 隐藏主窗口 |
+| `Cmd+Return` | 发送当前问题 |
+
+## 项目结构
+
+```text
+AggregateAI/
+├── AggregateAI.xcodeproj/
+├── AggregateAI/
+│   ├── AggregateAIApp.swift
+│   ├── AppDelegate.swift
+│   ├── AIProvider.swift
+│   ├── ContentView.swift
+│   ├── PersistentWebView.swift
+│   ├── AggregateAI.entitlements
+│   └── Assets.xcassets/
+└── README.md
+```
+
+## 已知限制
+
+- 本项目依赖第三方网页结构，页面改版后，自动发送逻辑可能失效
+- Grok 通过 URL 发问，在部分网络环境或服务端策略下可能失败
+- Gemini 的主题同步做了额外兼容处理，但仍受站点自身实现影响
+- 当前没有自动化测试，主要依赖手工验证
+
+## 适合继续扩展的方向
+
+- 增加 provider 配置页
+- 增加每个 provider 的独立刷新 / 重登控制
+- 加入日志面板，方便排查页面注入失败
+- 为同步提问增加队列状态和错误提示
+- 增加测试 target，覆盖核心状态流和基本构建检查
 
 ## 许可证
 
-本项目仅供个人学习使用。
+仅供个人学习和研究使用。
