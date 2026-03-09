@@ -32,6 +32,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         icon: "envelope.fill", width: 1200, height: 800
     )
 
+    private let twitterService = WebService(
+        id: "twitter", title: "Twitter", url: "https://x.com/home",
+        icon: "bird.fill", width: 700, height: 900
+    )
+
+    private var twitterWebView: WKWebView?
+    private var twitterNavDelegate: TwitterNavigationDelegate?
+
     private let videoServices: [WebService] = [
         WebService(id: "youtube", title: "YouTube", url: "https://www.youtube.com",
                    icon: "play.rectangle.fill", width: 1200, height: 800),
@@ -82,6 +90,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Notification service
         NotificationService.shared.appState = appState
 
+        // Observe appearance mode for Twitter theme sync
+        appState.$appearanceMode
+            .dropFirst()
+            .sink { [weak self] _ in
+                self?.syncTwitterTheme()
+            }
+            .store(in: &cancellables)
+
         // Auto show main window on launch
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
             self.showWindow()
@@ -115,7 +131,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         videoItem.submenu = videoSubmenu
         statusMenu.addItem(videoItem)
 
-        // 3. 收取邮件
+        // 3. Twitter
+        let twitterItem = NSMenuItem(title: "Twitter", action: #selector(openTwitter), keyEquivalent: "")
+        twitterItem.target = self
+        twitterItem.image = NSImage(systemSymbolName: "bird.fill", accessibilityDescription: nil)
+        statusMenu.addItem(twitterItem)
+
+        // 4. 收取邮件
         let mailItem = NSMenuItem(title: "收取邮件", action: #selector(openGmail), keyEquivalent: "")
         mailItem.target = self
         mailItem.image = NSImage(systemSymbolName: "envelope.fill", accessibilityDescription: nil)
@@ -256,6 +278,89 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func openGmail() {
         openServiceWindow(gmailService)
+    }
+
+    @objc private func openTwitter() {
+        openTwitterServiceWindow()
+    }
+
+    // MARK: - Twitter Service Window
+
+    private var currentThemeIsDark: Bool {
+        switch appState.appearanceMode {
+        case .dark: return true
+        case .light: return false
+        case .system:
+            return NSApp.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        }
+    }
+
+    private func openTwitterServiceWindow() {
+        let service = twitterService
+
+        // If window already exists, just show it
+        if let window = serviceWindows[service.id] {
+            window.makeKeyAndOrderFront(nil)
+            NSApp.activate(ignoringOtherApps: true)
+            return
+        }
+
+        // Create config with CSS injection
+        let config = WKWebViewConfiguration()
+        config.websiteDataStore = WKWebsiteDataStore.default()
+        config.mediaTypesRequiringUserActionForPlayback = []
+
+        let prefs = WKWebpagePreferences()
+        prefs.allowsContentJavaScript = true
+        config.defaultWebpagePreferences = prefs
+
+        // Inject CSS at document start (before render → no flash)
+        let bootstrapJS = TwitterCSSInjector.buildBootstrapScript(isDark: currentThemeIsDark)
+        let userScript = WKUserScript(source: bootstrapJS, injectionTime: .atDocumentStart, forMainFrameOnly: true)
+        config.userContentController.addUserScript(userScript)
+
+        let webView = WKWebView(frame: .zero, configuration: config)
+        webView.allowsBackForwardNavigationGestures = true
+
+        // Chrome UA — Twitter degrades Safari WKWebView
+        webView.customUserAgent = UserAgentProfile.chrome.userAgentString
+
+        // Navigation delegate to re-inject CSS on SPA navigations
+        let navDelegate = TwitterNavigationDelegate(isDark: currentThemeIsDark)
+        webView.navigationDelegate = navDelegate
+        twitterNavDelegate = navDelegate
+
+        if let url = URL(string: service.url) {
+            webView.load(URLRequest(url: url))
+        }
+
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: service.width, height: service.height),
+            styleMask: [.titled, .closable, .resizable, .miniaturizable],
+            backing: .buffered,
+            defer: false
+        )
+        window.title = service.title
+        window.contentView = webView
+        window.center()
+        window.isReleasedWhenClosed = false
+        window.setFrameAutosaveName("Omni_\(service.id)")
+        window.toolbar = makeServiceToolbar(for: service, webView: webView)
+
+        serviceWindows[service.id] = window
+        serviceWebViews[service.id] = webView
+        twitterWebView = webView
+
+        window.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
+    private func syncTwitterTheme() {
+        guard let webView = twitterWebView else { return }
+        let isDark = currentThemeIsDark
+        twitterNavDelegate?.isDark = isDark
+        let js = TwitterCSSInjector.buildRuntimeUpdateScript(isDark: isDark)
+        webView.evaluateJavaScript(js)
     }
 
     @objc private func openSettings() {
@@ -406,5 +511,21 @@ final class ServiceToolbarDelegate: NSObject, NSToolbarDelegate {
 
     @objc func reload(_ sender: NSToolbarItem) {
         findWebView(for: sender.tag)?.reload()
+    }
+}
+
+// MARK: - Twitter Navigation Delegate
+
+final class TwitterNavigationDelegate: NSObject, WKNavigationDelegate {
+    var isDark: Bool
+
+    init(isDark: Bool) {
+        self.isDark = isDark
+    }
+
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        // Re-inject CSS after full page navigations (not SPA pushState)
+        let js = TwitterCSSInjector.buildBootstrapScript(isDark: isDark)
+        webView.evaluateJavaScript(js)
     }
 }

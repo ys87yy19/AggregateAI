@@ -89,6 +89,81 @@ final class APIService {
         }
     }
 
+    // MARK: - Speed Test
+
+    struct SpeedTestResult {
+        let model: String
+        let latencyMs: Int      // Time to first token (ms)
+        let error: String?      // nil = success
+    }
+
+    /// Send a tiny request to measure time-to-first-token for a single model
+    func testModelSpeed(endpoint: String, apiKey: String, model: String) async -> SpeedTestResult {
+        guard !endpoint.isEmpty else {
+            return SpeedTestResult(model: model, latencyMs: 0, error: "未配置 API")
+        }
+
+        let urlString = endpoint.hasSuffix("/")
+            ? "\(endpoint)v1/chat/completions"
+            : "\(endpoint)/v1/chat/completions"
+
+        guard let url = URL(string: urlString) else {
+            return SpeedTestResult(model: model, latencyMs: 0, error: "无效 URL")
+        }
+
+        let chatRequest = ChatRequest(
+            model: model,
+            messages: [
+                ChatRequest.Message(role: "user", content: "Hi")
+            ],
+            stream: true
+        )
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.timeoutInterval = 30
+        if !apiKey.isEmpty {
+            request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        }
+
+        do {
+            request.httpBody = try JSONEncoder().encode(chatRequest)
+        } catch {
+            return SpeedTestResult(model: model, latencyMs: 0, error: "编码错误")
+        }
+
+        let startTime = CFAbsoluteTimeGetCurrent()
+
+        do {
+            let (bytes, response) = try await URLSession.shared.bytes(for: request)
+
+            guard let httpResponse = response as? HTTPURLResponse,
+                  httpResponse.statusCode == 200 else {
+                let code = (response as? HTTPURLResponse)?.statusCode ?? -1
+                return SpeedTestResult(model: model, latencyMs: 0, error: "HTTP \(code)")
+            }
+
+            // Wait for first data line (time to first token)
+            for try await line in bytes.lines {
+                let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+                if trimmed.hasPrefix("data: ") {
+                    let elapsed = CFAbsoluteTimeGetCurrent() - startTime
+                    let ms = Int(elapsed * 1000)
+
+                    // Cancel the rest — we only need TTFT
+                    return SpeedTestResult(model: model, latencyMs: ms, error: nil)
+                }
+            }
+
+            // If we got here, no data lines received
+            let elapsed = CFAbsoluteTimeGetCurrent() - startTime
+            return SpeedTestResult(model: model, latencyMs: Int(elapsed * 1000), error: nil)
+        } catch {
+            return SpeedTestResult(model: model, latencyMs: 0, error: "超时")
+        }
+    }
+
     // MARK: - Fetch Models
 
     func fetchModels(endpoint: String, apiKey: String) async throws -> [String] {

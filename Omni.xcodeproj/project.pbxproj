@@ -22,6 +22,7 @@
 		BB000017 /* ClipboardMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB000007 /* ClipboardMonitor.swift */; };
 		CC000001 /* APIService.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC000011 /* APIService.swift */; };
 		CC000002 /* AggregationResultView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC000012 /* AggregationResultView.swift */; };
+		DD000001 /* TwitterCSSInjector.swift in Sources */ = {isa = PBXBuildFile; fileRef = DD000011 /* TwitterCSSInjector.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -42,6 +43,7 @@
 		BB000007 /* ClipboardMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClipboardMonitor.swift; sourceTree = "<group>"; };
 		CC000011 /* APIService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIService.swift; sourceTree = "<group>"; };
 		CC000012 /* AggregationResultView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AggregationResultView.swift; sourceTree = "<group>"; };
+		DD000011 /* TwitterCSSInjector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TwitterCSSInjector.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -98,6 +100,7 @@
 				BB000006 /* ObsidianService.swift */,
 				BB000007 /* ClipboardMonitor.swift */,
 				CC000011 /* APIService.swift */,
+				DD000011 /* TwitterCSSInjector.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -193,6 +196,7 @@
 				BB000017 /* ClipboardMonitor.swift in Sources */,
 				CC000001 /* APIService.swift in Sources */,
 				CC000002 /* AggregationResultView.swift in Sources */,
+				DD000001 /* TwitterCSSInjector.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

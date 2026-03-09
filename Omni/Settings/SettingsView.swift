@@ -23,7 +23,7 @@ struct SettingsView: View {
             APISettingsTab(appState: appState)
                 .tabItem { Label("API", systemImage: "network") }
         }
-        .frame(width: 480, height: 400)
+        .frame(width: 520, height: 500)
         .padding()
     }
 }
@@ -175,6 +175,10 @@ struct APISettingsTab: View {
     @State private var isFetchingModels = false
     @State private var fetchError: String? = nil
     @State private var showPromptEditor = false
+    @State private var isTesting = false
+    @State private var testProgress: Int = 0
+    @State private var testTotal: Int = 0
+    @State private var speedResults: [APIService.SpeedTestResult] = []
 
     var body: some View {
         Form {
@@ -199,9 +203,24 @@ struct APISettingsTab: View {
                     }
                     .disabled(isFetchingModels || appState.apiEndpoint.isEmpty)
 
+                    if !appState.apiAvailableModels.isEmpty {
+                        Button("一键测速") {
+                            Task { await runSpeedTest() }
+                        }
+                        .disabled(isTesting)
+                    }
+
                     if isFetchingModels {
                         ProgressView()
                             .controlSize(.small)
+                    }
+
+                    if isTesting {
+                        ProgressView()
+                            .controlSize(.small)
+                        Text("\(testProgress)/\(testTotal)")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
                     }
                 }
 
@@ -209,7 +228,18 @@ struct APISettingsTab: View {
                     Picker("模型", selection: $appState.apiSelectedModel) {
                         Text("请选择...").tag("")
                         ForEach(appState.apiAvailableModels, id: \.self) { model in
-                            Text(model).tag(model)
+                            HStack {
+                                Text(model)
+                                if let result = speedResults.first(where: { $0.model == model }) {
+                                    Spacer()
+                                    if let err = result.error {
+                                        Text(err).foregroundColor(.red)
+                                    } else {
+                                        Text("\(result.latencyMs)ms")
+                                            .foregroundColor(speedColor(ms: result.latencyMs))
+                                    }
+                                }
+                            }.tag(model)
                         }
                     }
                 } else if !appState.apiSelectedModel.isEmpty {
@@ -226,6 +256,66 @@ struct APISettingsTab: View {
                     Text(error)
                         .font(.caption)
                         .foregroundColor(.red)
+                }
+
+                // Speed test results
+                if !speedResults.isEmpty {
+                    VStack(alignment: .leading, spacing: 3) {
+                        HStack {
+                            Text("测速结果")
+                                .font(.caption)
+                                .fontWeight(.semibold)
+                            Text("（首 Token 延迟 · 点击选用）")
+                                .font(.caption2)
+                                .foregroundColor(.secondary)
+                        }
+
+                        ForEach(sortedResults, id: \.model) { result in
+                            Button {
+                                appState.apiSelectedModel = result.model
+                            } label: {
+                                HStack(spacing: 6) {
+                                    if let rank = rankOf(result) {
+                                        Text(rankEmoji(rank))
+                                            .font(.system(size: 11))
+                                    }
+
+                                    Text(result.model)
+                                        .font(.system(size: 11, design: .monospaced))
+                                        .lineLimit(1)
+                                        .truncationMode(.middle)
+
+                                    Spacer()
+
+                                    if let err = result.error {
+                                        Text(err)
+                                            .font(.caption2)
+                                            .foregroundColor(.red)
+                                    } else {
+                                        Text("\(result.latencyMs) ms")
+                                            .font(.system(size: 11, weight: .medium, design: .monospaced))
+                                            .foregroundColor(speedColor(ms: result.latencyMs))
+                                    }
+
+                                    if appState.apiSelectedModel == result.model {
+                                        Image(systemName: "checkmark.circle.fill")
+                                            .foregroundColor(.accentColor)
+                                            .font(.system(size: 10))
+                                    }
+                                }
+                                .padding(.vertical, 2)
+                                .padding(.horizontal, 6)
+                                .background(
+                                    appState.apiSelectedModel == result.model
+                                        ? Color.accentColor.opacity(0.1)
+                                        : Color.clear
+                                )
+                                .cornerRadius(4)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    .padding(.top, 2)
                 }
             }
 
@@ -293,6 +383,68 @@ struct APISettingsTab: View {
             )
         }
     }
+
+    // MARK: - Speed Test
+
+    private var sortedResults: [APIService.SpeedTestResult] {
+        speedResults.sorted { a, b in
+            if a.error != nil && b.error == nil { return false }
+            if a.error == nil && b.error != nil { return true }
+            return a.latencyMs < b.latencyMs
+        }
+    }
+
+    private func rankOf(_ result: APIService.SpeedTestResult) -> Int? {
+        guard result.error == nil else { return nil }
+        let successResults = sortedResults.filter { $0.error == nil }
+        return successResults.firstIndex(where: { $0.model == result.model }).map { $0 + 1 }
+    }
+
+    private func rankEmoji(_ rank: Int) -> String {
+        switch rank {
+        case 1: return "🥇"
+        case 2: return "🥈"
+        case 3: return "🥉"
+        default: return "　"
+        }
+    }
+
+    private func speedColor(ms: Int) -> Color {
+        if ms < 1000 { return .green }
+        if ms < 3000 { return .orange }
+        return .red
+    }
+
+    private func runSpeedTest() async {
+        let models = appState.apiAvailableModels
+        guard !models.isEmpty else { return }
+
+        isTesting = true
+        testProgress = 0
+        testTotal = models.count
+        speedResults = []
+
+        await withTaskGroup(of: APIService.SpeedTestResult.self) { group in
+            for model in models {
+                group.addTask {
+                    await APIService.shared.testModelSpeed(
+                        endpoint: self.appState.apiEndpoint,
+                        apiKey: self.appState.apiKey,
+                        model: model
+                    )
+                }
+            }
+
+            for await result in group {
+                speedResults.append(result)
+                testProgress += 1
+            }
+        }
+
+        isTesting = false
+    }
+
+    // MARK: - Fetch Models
 
     private func fetchModels() {
         isFetchingModels = true
