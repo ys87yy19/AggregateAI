@@ -61,7 +61,7 @@ final class ObsidianService {
         }
         defer { vaultURL.stopAccessingSecurityScopedResource() }
 
-        let subfolder = vaultURL.appendingPathComponent("AggregateAI", isDirectory: true)
+        let subfolder = vaultURL.appendingPathComponent("Omni", isDirectory: true)
         try FileManager.default.createDirectory(at: subfolder, withIntermediateDirectories: true)
 
         let dateFormatter = DateFormatter()
@@ -73,7 +73,7 @@ final class ObsidianService {
         var markdown = "---\n"
         markdown += "provider: \(provider.displayName)\n"
         markdown += "date: \(isoFormatter.string(from: Date()))\n"
-        markdown += "source: AggregateAI\n"
+        markdown += "source: Omni\n"
         if let q = question, !q.isEmpty {
             markdown += "question: \(q)\n"
         }
@@ -91,6 +91,27 @@ final class ObsidianService {
                 try saveToVault(content: content, provider: provider, question: question)
             }
         }
+    }
+
+    func saveAggregatedNote(markdown: String, question: String?) throws {
+        guard let vaultURL = resolveVaultURL() else {
+            throw ObsidianError.noVaultConfigured
+        }
+
+        guard vaultURL.startAccessingSecurityScopedResource() else {
+            throw ObsidianError.accessDenied
+        }
+        defer { vaultURL.stopAccessingSecurityScopedResource() }
+
+        let subfolder = vaultURL.appendingPathComponent("Omni", isDirectory: true)
+        try FileManager.default.createDirectory(at: subfolder, withIntermediateDirectories: true)
+
+        let dateFormatter = DateFormatter()
+        dateFormatter.dateFormat = "yyyy-MM-dd_HHmmss"
+        let filename = "Aggregated-\(dateFormatter.string(from: Date())).md"
+        let fileURL = subfolder.appendingPathComponent(filename)
+
+        try markdown.write(to: fileURL, atomically: true, encoding: .utf8)
     }
 
     enum ObsidianError: LocalizedError {

@@ -83,7 +83,7 @@ final class ExportService {
         var md = "---\n"
         md += "provider: \(provider.displayName)\n"
         md += "date: \(dateFormatter.string(from: Date()))\n"
-        md += "source: AggregateAI\n"
+        md += "source: Omni\n"
         if let q = question, !q.isEmpty {
             md += "question: \(q)\n"
         }
@@ -98,7 +98,7 @@ final class ExportService {
 
         let panel = NSSavePanel()
         panel.allowedContentTypes = [.plainText]
-        panel.nameFieldStringValue = "AggregateAI-\(dateFormatter.string(from: Date())).md"
+        panel.nameFieldStringValue = "Omni-\(dateFormatter.string(from: Date())).md"
         panel.canCreateDirectories = true
 
         if panel.runModal() == .OK, let url = panel.url {

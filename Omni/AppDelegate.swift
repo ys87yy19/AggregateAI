@@ -48,7 +48,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Create menu bar icon
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         if let button = statusItem.button {
-            button.image = NSImage(systemSymbolName: "brain.head.profile", accessibilityDescription: "AggregateAI")
+            button.image = NSImage(systemSymbolName: "brain.head.profile", accessibilityDescription: "Omni")
             button.action = #selector(handleStatusItemClick)
             button.target = self
             button.sendAction(on: [.leftMouseUp, .rightMouseUp])
@@ -175,11 +175,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 backing: .buffered,
                 defer: false
             )
-            window.title = "AggregateAI"
+            window.title = "Omni"
             window.contentView = NSHostingView(rootView: contentView)
             window.center()
             window.isReleasedWhenClosed = false
-            window.setFrameAutosaveName("AggregateAIMainWindow")
+            window.setFrameAutosaveName("OmniMainWindow")
             mainWindow = window
             appState.attachMainWindow(window)
         }
@@ -226,7 +226,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         window.contentView = webView
         window.center()
         window.isReleasedWhenClosed = false
-        window.setFrameAutosaveName("AggregateAI_\(service.id)")
+        window.setFrameAutosaveName("Omni_\(service.id)")
 
         // Add navigation toolbar
         window.toolbar = makeServiceToolbar(for: service, webView: webView)
@@ -267,7 +267,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 backing: .buffered,
                 defer: false
             )
-            window.title = "AggregateAI 偏好设置"
+            window.title = "Omni 偏好设置"
             window.contentView = NSHostingView(rootView: settingsView)
             window.center()
             window.isReleasedWhenClosed = false
@@ -317,7 +317,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         )
 
         if handlerStatus != noErr || hotKeyStatus != noErr {
-            NSLog("Failed to register AggregateAI global hotkey. handlerStatus=%d hotKeyStatus=%d", handlerStatus, hotKeyStatus)
+            NSLog("Failed to register Omni global hotkey. handlerStatus=%d hotKeyStatus=%d", handlerStatus, hotKeyStatus)
         }
     }
 

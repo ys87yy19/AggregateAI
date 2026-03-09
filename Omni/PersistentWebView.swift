@@ -12,11 +12,11 @@ final class WebViewManager: NSObject, WKNavigationDelegate, WKScriptMessageHandl
     private var pendingQuestions: [AIProvider: String] = [:]
     private var userAgentSettings = UserAgentSettings.recommended
     private var appliedUserAgentProfiles: [AIProvider: UserAgentProfile] = [:]
-    private let logger = Logger(subsystem: "com.aggregateai.app", category: "WebViewManager")
+    private let logger = Logger(subsystem: "com.omni.app", category: "WebViewManager")
     private let multiProviderDispatchInterval: TimeInterval = 0.6
     private let sendCooldown: TimeInterval = 0.7
     private var lastSyncedAppearanceMode: AppearanceMode?
-    private static let notifyMessageName = "aggregateaiNotify"
+    private static let notifyMessageName = "omniNotify"
 
     private override init() {}
 
@@ -267,7 +267,7 @@ final class WebViewManager: NSObject, WKNavigationDelegate, WKScriptMessageHandl
 
             try {
                 document.documentElement.style.setProperty('color-scheme', desiredTheme, 'important');
-                document.documentElement.dataset.aggregateaiTheme = desiredTheme;
+                document.documentElement.dataset.omniTheme = desiredTheme;
             } catch (_) {}
         })();
         """
@@ -284,7 +284,7 @@ final class WebViewManager: NSObject, WKNavigationDelegate, WKScriptMessageHandl
 
                 if (root) {
                     root.style.setProperty('color-scheme', desiredTheme, 'important');
-                    root.dataset.aggregateaiTheme = desiredTheme;
+                    root.dataset.omniTheme = desiredTheme;
                     root.dataset.theme = desiredTheme;
                     root.classList.toggle('dark', prefersDark);
                     root.classList.toggle('light', !prefersDark);
@@ -294,7 +294,7 @@ final class WebViewManager: NSObject, WKNavigationDelegate, WKScriptMessageHandl
 
                 if (body) {
                     body.style.setProperty('color-scheme', desiredTheme, 'important');
-                    body.dataset.aggregateaiTheme = desiredTheme;
+                    body.dataset.omniTheme = desiredTheme;
                     body.dataset.theme = desiredTheme;
                     body.classList.toggle('dark', prefersDark);
                     body.classList.toggle('light', !prefersDark);
@@ -302,7 +302,7 @@ final class WebViewManager: NSObject, WKNavigationDelegate, WKScriptMessageHandl
                     body.classList.toggle('light-theme', !prefersDark);
                 }
 
-                window.dispatchEvent(new CustomEvent('aggregateai:theme-changed', {
+                window.dispatchEvent(new CustomEvent('omni:theme-changed', {
                     detail: { theme: desiredTheme }
                 }));
 
@@ -387,7 +387,7 @@ final class WebViewManager: NSObject, WKNavigationDelegate, WKScriptMessageHandl
                 patchStorage(window.localStorage);
                 patchStorage(window.sessionStorage);
                 patchCookies();
-                document.documentElement.dataset.aggregateaiGeminiTheme = desiredTheme;
+                document.documentElement.dataset.omniGeminiTheme = desiredTheme;
             } catch (_) {}
         })();
         """
@@ -591,13 +591,13 @@ final class WebViewManager: NSObject, WKNavigationDelegate, WKScriptMessageHandl
         let providerName = provider.rawValue
         let js = """
         (function() {
-            if (window.__aggregateai_observer) {
-                window.__aggregateai_observer.disconnect();
-                window.__aggregateai_observer = null;
+            if (window.__omni_observer) {
+                window.__omni_observer.disconnect();
+                window.__omni_observer = null;
             }
-            if (window.__aggregateai_debounce) {
-                clearTimeout(window.__aggregateai_debounce);
-                window.__aggregateai_debounce = null;
+            if (window.__omni_debounce) {
+                clearTimeout(window.__omni_debounce);
+                window.__omni_debounce = null;
             }
 
             var DEBOUNCE_MS = 3000;
@@ -621,24 +621,24 @@ final class WebViewManager: NSObject, WKNavigationDelegate, WKScriptMessageHandl
                 var target = getResponseArea();
                 var observer = new MutationObserver(function(mutations) {
                     started = true;
-                    if (window.__aggregateai_debounce) {
-                        clearTimeout(window.__aggregateai_debounce);
+                    if (window.__omni_debounce) {
+                        clearTimeout(window.__omni_debounce);
                     }
-                    window.__aggregateai_debounce = setTimeout(function() {
+                    window.__omni_debounce = setTimeout(function() {
                         var text = target.textContent || '';
-                        window.webkit.messageHandlers.aggregateaiNotify.postMessage({
+                        window.webkit.messageHandlers.omniNotify.postMessage({
                             event: 'response_complete',
                             provider: '\(providerName)',
                             preview: text.substring(0, 300)
                         });
                         observer.disconnect();
-                        window.__aggregateai_observer = null;
-                        window.__aggregateai_debounce = null;
+                        window.__omni_observer = null;
+                        window.__omni_debounce = null;
                     }, DEBOUNCE_MS);
                 });
 
                 observer.observe(target, { childList: true, subtree: true, characterData: true });
-                window.__aggregateai_observer = observer;
+                window.__omni_observer = observer;
             }, 1000);
         })();
         """

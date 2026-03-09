@@ -20,4 +20,12 @@ enum SettingsKeys {
     // Feature 14: Obsidian
     static let obsidianVaultBookmark = "obsidianVaultBookmark"
     static let obsidianVaultPath = "obsidianVaultPath"
+
+    // Feature 15: API Aggregation
+    static let apiEndpoint = "apiEndpoint"
+    static let apiKey = "apiKey"
+    static let apiSelectedModel = "apiSelectedModel"
+    static let apiSystemPrompt = "apiSystemPrompt"
+    static let apiSaveBookmark = "apiSaveBookmark"
+    static let apiSavePath = "apiSavePath"
 }

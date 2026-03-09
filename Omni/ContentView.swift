@@ -45,6 +45,28 @@ final class AppState: ObservableObject {
         didSet { UserDefaults.standard.set(obsidianVaultPath, forKey: SettingsKeys.obsidianVaultPath) }
     }
 
+    // Feature 15: API Aggregation
+    @Published var apiEndpoint: String = "http://127.0.0.1:8317" {
+        didSet { UserDefaults.standard.set(apiEndpoint, forKey: SettingsKeys.apiEndpoint) }
+    }
+    @Published var apiKey: String = "" {
+        didSet { UserDefaults.standard.set(apiKey, forKey: SettingsKeys.apiKey) }
+    }
+    @Published var apiSelectedModel: String = "" {
+        didSet { UserDefaults.standard.set(apiSelectedModel, forKey: SettingsKeys.apiSelectedModel) }
+    }
+    @Published var apiSystemPrompt: String = APIService.defaultSystemPrompt {
+        didSet { UserDefaults.standard.set(apiSystemPrompt, forKey: SettingsKeys.apiSystemPrompt) }
+    }
+    @Published var apiSavePath: String = "" {
+        didSet { UserDefaults.standard.set(apiSavePath, forKey: SettingsKeys.apiSavePath) }
+    }
+    @Published var apiAvailableModels: [String] = []
+    @Published var isAggregating: Bool = false
+    @Published var showAggregationResult: Bool = false
+    @Published var aggregationResult: String = ""
+    @Published var aggregationError: String? = nil
+
     weak var mainWindow: NSWindow?
 
     init() {
@@ -70,6 +92,11 @@ final class AppState: ObservableObject {
         notifyOnlyWhenHidden = defaults.object(forKey: SettingsKeys.notifyOnlyWhenHidden) as? Bool ?? true
         clipboardMonitorEnabled = defaults.bool(forKey: SettingsKeys.clipboardMonitorEnabled)
         obsidianVaultPath = defaults.string(forKey: SettingsKeys.obsidianVaultPath) ?? ""
+        apiEndpoint = defaults.string(forKey: SettingsKeys.apiEndpoint) ?? "http://127.0.0.1:8317"
+        apiKey = defaults.string(forKey: SettingsKeys.apiKey) ?? ""
+        apiSelectedModel = defaults.string(forKey: SettingsKeys.apiSelectedModel) ?? ""
+        apiSystemPrompt = defaults.string(forKey: SettingsKeys.apiSystemPrompt) ?? APIService.defaultSystemPrompt
+        apiSavePath = defaults.string(forKey: SettingsKeys.apiSavePath) ?? ""
     }
 
     func applyAppearance() {
@@ -214,6 +241,19 @@ struct ToolbarView: View {
                 .frame(height: 20)
                 .padding(.horizontal, 4)
 
+            // AI Aggregation button
+            Button {
+                Task { await startAggregation() }
+            } label: {
+                Image(systemName: "brain.head.profile")
+                    .font(.system(size: 12))
+                    .frame(width: 28, height: 28)
+                    .foregroundColor(appState.isAggregating ? .orange : .secondary)
+            }
+            .buttonStyle(.plain)
+            .disabled(appState.isAggregating)
+            .help("AI 聚合分析")
+
             // Export / Save menu
             Menu {
                 Button {
@@ -239,10 +279,13 @@ struct ToolbarView: View {
         .padding(.horizontal, 8)
         .padding(.vertical, 4)
         .background(.ultraThinMaterial)
-        .alert("AggregateAI", isPresented: $showAlert) {
+        .alert("Omni", isPresented: $showAlert) {
             Button("OK") {}
         } message: {
             Text(alertMessage)
+        }
+        .sheet(isPresented: $appState.showAggregationResult) {
+            AggregationResultView(appState: appState)
         }
     }
 
@@ -282,6 +325,71 @@ struct ToolbarView: View {
             alertMessage = error.localizedDescription
             showAlert = true
         }
+    }
+
+    private func startAggregation() async {
+        guard !appState.apiEndpoint.isEmpty else {
+            alertMessage = "未配置 API 地址，请在偏好设置 > API 中设置。"
+            showAlert = true
+            return
+        }
+        guard !appState.apiSelectedModel.isEmpty else {
+            alertMessage = "未选择模型，请在偏好设置 > API 中获取并选择模型。"
+            showAlert = true
+            return
+        }
+
+        var contents: [(provider: AIProvider, text: String)] = []
+        for provider in AIProvider.providers {
+            do {
+                let text = try await ExportService.shared.extractContent(from: provider)
+                if !text.isEmpty {
+                    contents.append((provider: provider, text: text))
+                }
+            } catch {
+                // Partial aggregation is still useful
+            }
+        }
+
+        guard !contents.isEmpty else {
+            alertMessage = "未能从任何 AI 提取到内容。请先向 AI 提问后再聚合。"
+            showAlert = true
+            return
+        }
+
+        appState.aggregationError = nil
+        appState.isAggregating = true
+        appState.showAggregationResult = true
+
+        // Reset the streaming store — clears NSTextView and internal buffer
+        StreamingTextStore.shared.reset()
+
+        let stream = APIService.shared.aggregate(
+            endpoint: appState.apiEndpoint,
+            apiKey: appState.apiKey,
+            model: appState.apiSelectedModel,
+            contents: contents,
+            question: appState.syncQuestion.isEmpty ? nil : appState.syncQuestion,
+            systemPrompt: appState.apiSystemPrompt
+        )
+
+        do {
+            // Stream chunks directly to NSTextView via StreamingTextStore
+            // No SwiftUI @Published updates during streaming — zero diffing overhead
+            for try await chunk in stream {
+                StreamingTextStore.shared.append(chunk)
+            }
+            // Flush any remaining buffered text
+            StreamingTextStore.shared.finish()
+        } catch {
+            // Flush whatever we have so far before reporting the error
+            StreamingTextStore.shared.finish()
+            appState.aggregationError = error.localizedDescription
+        }
+
+        // Sync final text back for save/export (single update, not per-chunk)
+        appState.aggregationResult = StreamingTextStore.shared.getFinalText()
+        appState.isAggregating = false
     }
 }
 
