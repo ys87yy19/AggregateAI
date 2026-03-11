@@ -1,6 +1,25 @@
 import Foundation
 import SwiftUI
 
+enum WorkspaceMode: String {
+    case modules
+    case ai
+
+    var title: String {
+        switch self {
+        case .modules: return "模块"
+        case .ai: return "AI"
+        }
+    }
+
+    var iconName: String {
+        switch self {
+        case .modules: return "square.grid.2x2"
+        case .ai: return "brain.head.profile"
+        }
+    }
+}
+
 enum AIProvider: String, CaseIterable, Identifiable {
     case all
     case gemini

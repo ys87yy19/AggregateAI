@@ -13,6 +13,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var settingsWindow: NSWindow?
     private var serviceWindows: [String: NSWindow] = [:]
     private var serviceWebViews: [String: WKWebView] = [:]
+    private var serviceWindowDelegates: [String: ServiceWindowDelegate] = [:]
     private var hotKeyRef: EventHotKeyRef?
     private var hotKeyHandlerRef: EventHandlerRef?
     private var cancellables: [AnyCancellable] = []
@@ -37,6 +38,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         icon: "bird.fill", width: 700, height: 900
     )
 
+    private let xianyuService = WebService(
+        id: "xianyu", title: "闲鱼", url: "https://www.goofish.com",
+        icon: "cart.fill", width: 1200, height: 800
+    )
+
     private var twitterWebView: WKWebView?
     private var twitterNavDelegate: TwitterNavigationDelegate?
 
@@ -52,6 +58,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Hide dock icon
         NSApp.setActivationPolicy(.accessory)
+
+        // Launch into the primary workflow by default.
+        appState.workspaceMode = .ai
+        appState.selectedTab = .all
+
+        appState.registerModuleLauncher { [weak self] module in
+            self?.openIntegratedModule(module) ?? false
+        }
+        appState.registerSettingsPresenter { [weak self] in
+            self?.showSettingsWindow()
+        }
 
         // Create menu bar icon
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
@@ -115,6 +132,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         aiItem.image = NSImage(systemSymbolName: "sparkle.magnifyingglass", accessibilityDescription: nil)
         statusMenu.addItem(aiItem)
 
+        let modulesItem = NSMenuItem(title: "知识模块", action: nil, keyEquivalent: "")
+        modulesItem.image = NSImage(systemSymbolName: "square.grid.2x2", accessibilityDescription: nil)
+        let modulesSubmenu = NSMenu()
+        for module in OmniModuleRegistry.integratedModules {
+            let item = NSMenuItem(title: module.title, action: #selector(openIntegratedModuleFromMenu(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = module.id
+            item.image = NSImage(systemSymbolName: module.icon, accessibilityDescription: nil)
+            modulesSubmenu.addItem(item)
+        }
+        modulesItem.submenu = modulesSubmenu
+        statusMenu.addItem(modulesItem)
+
         statusMenu.addItem(NSMenuItem.separator())
 
         // 2. 视频平台 submenu
@@ -142,6 +172,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         mailItem.target = self
         mailItem.image = NSImage(systemSymbolName: "envelope.fill", accessibilityDescription: nil)
         statusMenu.addItem(mailItem)
+
+        // 5. 闲鱼
+        let xianyuItem = NSMenuItem(title: "闲鱼", action: #selector(openXianyu), keyEquivalent: "")
+        xianyuItem.target = self
+        xianyuItem.image = NSImage(systemSymbolName: "cart.fill", accessibilityDescription: nil)
+        statusMenu.addItem(xianyuItem)
 
         statusMenu.addItem(NSMenuItem.separator())
 
@@ -215,7 +251,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func openServiceWindow(_ service: WebService) {
         // If window already exists, just show it
         if let window = serviceWindows[service.id] {
+            if window.isMiniaturized {
+                window.deminiaturize(nil)
+            }
+            window.center()
             window.makeKeyAndOrderFront(nil)
+            window.orderFrontRegardless()
             NSApp.activate(ignoringOtherApps: true)
             return
         }
@@ -232,6 +273,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let webView = WKWebView(frame: .zero, configuration: config)
         webView.allowsBackForwardNavigationGestures = true
         webView.customUserAgent = UserAgentProfile.safari.userAgentString
+        webView.uiDelegate = ServiceWebViewUIDelegate.shared
 
         if let url = URL(string: service.url) {
             webView.load(URLRequest(url: url))
@@ -256,7 +298,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         serviceWindows[service.id] = window
         serviceWebViews[service.id] = webView
 
+        // Pause media when window is closed
+        let closeDelegate = ServiceWindowDelegate(serviceId: service.id, appDelegate: self)
+        window.delegate = closeDelegate
+        serviceWindowDelegates[service.id] = closeDelegate
+
         window.makeKeyAndOrderFront(nil)
+        window.orderFrontRegardless()
         NSApp.activate(ignoringOtherApps: true)
     }
 
@@ -268,6 +316,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return toolbar
     }
 
+    func pauseMedia(for serviceId: String) {
+        guard let webView = serviceWebViews[serviceId] else { return }
+        webView.evaluateJavaScript("""
+            document.querySelectorAll('video, audio').forEach(el => el.pause());
+        """)
+    }
+
+    @discardableResult
+    func openIntegratedModule(id: String) -> Bool {
+        guard let module = OmniModuleRegistry.module(id: id) else { return false }
+        return openIntegratedModule(module)
+    }
+
+    @discardableResult
+    private func openIntegratedModule(_ module: OmniModuleDefinition) -> Bool {
+        switch module.launchStyle {
+        case .webApp(let url, let width, let height):
+            openServiceWindow(
+                WebService(
+                    id: module.id,
+                    title: module.title,
+                    url: url,
+                    icon: module.icon,
+                    width: width,
+                    height: height
+                )
+            )
+            return true
+        }
+    }
+
     // MARK: - Menu Actions
 
     @objc private func openVideoService(_ sender: NSMenuItem) {
@@ -276,8 +355,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         openServiceWindow(service)
     }
 
+    @objc private func openIntegratedModuleFromMenu(_ sender: NSMenuItem) {
+        guard let moduleId = sender.representedObject as? String else { return }
+        openIntegratedModule(id: moduleId)
+    }
+
     @objc private func openGmail() {
         openServiceWindow(gmailService)
+    }
+
+    @objc private func openXianyu() {
+        openServiceWindow(xianyuService)
     }
 
     @objc private func openTwitter() {
@@ -300,7 +388,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         // If window already exists, just show it
         if let window = serviceWindows[service.id] {
+            if window.isMiniaturized {
+                window.deminiaturize(nil)
+            }
+            window.center()
             window.makeKeyAndOrderFront(nil)
+            window.orderFrontRegardless()
             NSApp.activate(ignoringOtherApps: true)
             return
         }
@@ -352,6 +445,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         twitterWebView = webView
 
         window.makeKeyAndOrderFront(nil)
+        window.orderFrontRegardless()
         NSApp.activate(ignoringOtherApps: true)
     }
 
@@ -363,11 +457,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         webView.evaluateJavaScript(js)
     }
 
+    func showSettingsWindow() {
+        openSettings()
+    }
+
     @objc private func openSettings() {
         if settingsWindow == nil {
             let settingsView = SettingsView(appState: appState)
             let window = NSWindow(
-                contentRect: NSRect(x: 0, y: 0, width: 520, height: 400),
+                contentRect: NSRect(x: 0, y: 0, width: 560, height: 560),
                 styleMask: [.titled, .closable],
                 backing: .buffered,
                 defer: false
@@ -514,7 +612,21 @@ final class ServiceToolbarDelegate: NSObject, NSToolbarDelegate {
     }
 }
 
-// MARK: - Twitter Navigation Delegate
+// MARK: - Service Window Delegate (pause media on close)
+
+final class ServiceWindowDelegate: NSObject, NSWindowDelegate {
+    let serviceId: String
+    weak var appDelegate: AppDelegate?
+
+    init(serviceId: String, appDelegate: AppDelegate) {
+        self.serviceId = serviceId
+        self.appDelegate = appDelegate
+    }
+
+    func windowWillClose(_ notification: Notification) {
+        appDelegate?.pauseMedia(for: serviceId)
+    }
+}
 
 final class TwitterNavigationDelegate: NSObject, WKNavigationDelegate {
     var isDark: Bool
@@ -527,5 +639,20 @@ final class TwitterNavigationDelegate: NSObject, WKNavigationDelegate {
         // Re-inject CSS after full page navigations (not SPA pushState)
         let js = TwitterCSSInjector.buildBootstrapScript(isDark: isDark)
         webView.evaluateJavaScript(js)
+    }
+}
+
+// MARK: - Service WebView UI Delegate (handle target="_blank" links)
+
+final class ServiceWebViewUIDelegate: NSObject, WKUIDelegate {
+    static let shared = ServiceWebViewUIDelegate()
+
+    func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration,
+                 for navigationAction: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
+        // Open target="_blank" links in the same webview
+        if navigationAction.targetFrame == nil, let url = navigationAction.request.url {
+            webView.load(URLRequest(url: url))
+        }
+        return nil
     }
 }

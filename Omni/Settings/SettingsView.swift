@@ -21,9 +21,12 @@ struct SettingsView: View {
                 .tabItem { Label("Obsidian", systemImage: "tray.and.arrow.down") }
 
             APISettingsTab(appState: appState)
-                .tabItem { Label("API", systemImage: "network") }
+                .tabItem { Label("统一 AI", systemImage: "network") }
+
+            IntegrationsSettingsTab(appState: appState)
+                .tabItem { Label("模块", systemImage: "square.grid.2x2") }
         }
-        .frame(width: 520, height: 500)
+        .frame(width: 560, height: 560)
         .padding()
     }
 }
@@ -182,7 +185,7 @@ struct APISettingsTab: View {
 
     var body: some View {
         Form {
-            Section("API 配置") {
+            Section("统一 AI 网关") {
                 HStack {
                     Text("API 地址:")
                     TextField("http://127.0.0.1:8317", text: $appState.apiEndpoint)
@@ -194,6 +197,14 @@ struct APISettingsTab: View {
                     SecureField("可选", text: $appState.apiKey)
                         .textFieldStyle(.roundedBorder)
                 }
+
+                Text("Omni 会把这套地址、模型和 API Key 作为统一网关配置，供聚合能力和已接入模块复用。")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+
+                Text("API Key 会保存在 macOS 钥匙串，不再落到明文 UserDefaults。")
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
             }
 
             Section("模型选择") {
@@ -484,6 +495,113 @@ struct APISettingsTab: View {
                 UserDefaults.standard.set(bookmarkData, forKey: SettingsKeys.apiSaveBookmark)
                 appState.apiSavePath = url.path
             }
+        }
+    }
+}
+
+// MARK: - Integrations Settings
+
+struct IntegrationsSettingsTab: View {
+    @ObservedObject var appState: AppState
+
+    var body: some View {
+        Form {
+            Section("模块宿主") {
+                Text("Omni 现在作为统一 AI 配置中心。后续接入的新模块，只要在这里登记，就可以直接复用同一套网关地址、模型和 API Key。")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+
+            Section("Siftly 集成") {
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack {
+                        Label("Siftly", systemImage: OmniModuleRegistry.siftly.icon)
+                            .font(.headline)
+                        Spacer()
+                        statusBadge(for: appState.moduleSyncStatuses[OmniModuleRegistry.siftly.id] ?? .idle)
+                    }
+
+                    Text(OmniModuleRegistry.siftly.subtitle)
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+
+                HStack {
+                    Text("模块地址:")
+                    TextField("http://127.0.0.1:3000", text: $appState.siftlyBaseURL)
+                        .textFieldStyle(.roundedBorder)
+                }
+
+                Toggle("统一 AI 配置变更时自动同步到 Siftly", isOn: $appState.siftlyAutoSyncEnabled)
+
+                HStack {
+                    Button("立即同步") {
+                        appState.syncModule(OmniModuleRegistry.siftly)
+                    }
+
+                    Button("测试连接") {
+                        appState.probeModule(OmniModuleRegistry.siftly)
+                    }
+
+                    Button("打开 Siftly") {
+                        (NSApp.delegate as? AppDelegate)?.openIntegratedModule(id: OmniModuleRegistry.siftly.id)
+                    }
+                }
+
+                if let status = appState.moduleSyncStatuses[OmniModuleRegistry.siftly.id] {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(status.message)
+                            .font(.caption)
+                            .foregroundColor(statusColor(status))
+
+                        if let updatedAt = status.updatedAt {
+                            Text("最近更新时间: \(updatedAt.formatted(date: .omitted, time: .shortened))")
+                                .font(.caption2)
+                                .foregroundColor(.secondary)
+                        }
+                    }
+                }
+
+                Text("同步时会把统一网关的 OpenAI 兼容地址、模型和 Key 下发到本地 Siftly，让 AI 搜索和 AI 分类复用同一套配置。")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+        }
+        .formStyle(.grouped)
+    }
+
+    private func statusBadge(for status: ModuleSyncStatus) -> some View {
+        let title: String
+        switch status.state {
+        case .idle:
+            title = "未同步"
+        case .syncing:
+            title = "同步中"
+        case .success:
+            title = "已同步"
+        case .failure:
+            title = "失败"
+        }
+
+        return Text(title)
+            .font(.caption)
+            .foregroundColor(statusColor(status))
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(statusColor(status).opacity(0.12))
+            .clipShape(Capsule())
+    }
+
+    private func statusColor(_ status: ModuleSyncStatus) -> Color {
+        switch status.state {
+        case .idle:
+            return .secondary
+        case .syncing:
+            return .orange
+        case .success:
+            return .green
+        case .failure:
+            return .red
         }
     }
 }

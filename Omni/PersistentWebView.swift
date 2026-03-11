@@ -16,7 +16,7 @@ final class WebViewManager: NSObject, WKNavigationDelegate, WKScriptMessageHandl
     private let multiProviderDispatchInterval: TimeInterval = 0.6
     private let sendCooldown: TimeInterval = 0.7
     private var lastSyncedAppearanceMode: AppearanceMode?
-    private static let notifyMessageName = "omniNotify"
+    nonisolated private static let notifyMessageName = "omniNotify"
 
     private override init() {}
 
@@ -105,6 +105,35 @@ final class WebViewManager: NSObject, WKNavigationDelegate, WKScriptMessageHandl
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
                 self.applyRuntimeThemeOverride(in: webView, provider: provider, theme: theme)
             }
+        }
+    }
+
+    // MARK: - New Chat
+
+    /// Start a new chat for a specific provider
+    func startNewChat(for provider: AIProvider) {
+        guard provider != .all else { return }
+        let wv = webView(for: provider)
+
+        switch provider {
+        case .gemini:
+            // Navigate to Gemini app page (new chat)
+            wv.load(URLRequest(url: URL(string: "https://gemini.google.com/app")!))
+        case .grok:
+            // Navigate to Grok home to start fresh
+            wv.load(URLRequest(url: URL(string: "https://grok.com/")!))
+        case .chatgpt:
+            // Navigate to ChatGPT root for a new conversation
+            wv.load(URLRequest(url: URL(string: "https://chatgpt.com/")!))
+        case .all:
+            break
+        }
+    }
+
+    /// Start new chats for all providers
+    func startNewChatForAll() {
+        for provider in AIProvider.providers {
+            startNewChat(for: provider)
         }
     }
 
@@ -562,9 +591,10 @@ final class WebViewManager: NSObject, WKNavigationDelegate, WKScriptMessageHandl
         _ userContentController: WKUserContentController,
         didReceive message: WKScriptMessage
     ) {
-        guard message.name == WebViewManager.notifyMessageName else { return }
+        let expectedName = WebViewManager.notifyMessageName
 
-        DispatchQueue.main.async {
+        Task { @MainActor in
+            guard message.name == expectedName else { return }
             guard let body = message.body as? [String: Any],
                   let event = body["event"] as? String,
                   event == "response_complete",

@@ -6,6 +6,22 @@ import Combine
 
 @MainActor
 final class AppState: ObservableObject {
+    private static let sharedAIKeychainService = "com.omni.app.shared-ai"
+    private static let sharedAIKeychainAccount = "gateway-api-key"
+
+    struct ModuleActionNotice: Identifiable, Equatable {
+        enum Kind: Equatable {
+            case info
+            case success
+            case failure
+        }
+
+        let id = UUID()
+        let message: String
+        let kind: Kind
+    }
+
+    @Published var workspaceMode: WorkspaceMode = .modules
     @Published var selectedTab: AIProvider = .all
     @Published var syncQuestion: String = ""
     @Published var userAgentSettings = UserAgentSettings.recommended
@@ -35,6 +51,12 @@ final class AppState: ObservableObject {
     @Published var apiSystemPrompt: String = APIService.defaultSystemPrompt
     @Published var apiSavePath: String = ""
     @Published var apiAvailableModels: [String] = []
+    @Published var siftlyBaseURL: String = "http://127.0.0.1:3000"
+    @Published var siftlyAutoSyncEnabled: Bool = true
+    @Published var moduleActionNotice: ModuleActionNotice?
+    @Published var moduleSyncStatuses: [String: ModuleSyncStatus] = [
+        OmniModuleRegistry.siftly.id: .idle
+    ]
     @Published var isAggregating: Bool = false
     @Published var showAggregationResult: Bool = false
     @Published var aggregationResult: String = ""
@@ -42,16 +64,25 @@ final class AppState: ObservableObject {
 
     weak var mainWindow: NSWindow?
     private var cancellables = Set<AnyCancellable>()
+    private var integrationSyncTask: Task<Void, Never>?
+    private var noticeDismissTask: Task<Void, Never>?
+    private var moduleLauncher: ((OmniModuleDefinition) -> Bool)?
+    private var settingsPresenter: (() -> Void)?
 
     init() {
         loadFromDefaults()
         setupAutoSave()
+        setupModuleAutoSync()
     }
 
     // MARK: - Load saved settings
 
     private func loadFromDefaults() {
         let d = UserDefaults.standard
+        if let raw = d.string(forKey: SettingsKeys.workspaceMode),
+           let mode = WorkspaceMode(rawValue: raw) {
+            workspaceMode = mode
+        }
         if let raw = d.string(forKey: SettingsKeys.layoutMode),
            let mode = LayoutMode(rawValue: raw) {
             layoutMode = mode
@@ -74,10 +105,30 @@ final class AppState: ObservableObject {
         clipboardMonitorEnabled = d.bool(forKey: SettingsKeys.clipboardMonitorEnabled)
         obsidianVaultPath = d.string(forKey: SettingsKeys.obsidianVaultPath) ?? ""
         apiEndpoint = d.string(forKey: SettingsKeys.apiEndpoint) ?? "http://127.0.0.1:8317"
-        apiKey = d.string(forKey: SettingsKeys.apiKey) ?? ""
         apiSelectedModel = d.string(forKey: SettingsKeys.apiSelectedModel) ?? ""
         apiSystemPrompt = d.string(forKey: SettingsKeys.apiSystemPrompt) ?? APIService.defaultSystemPrompt
         apiSavePath = d.string(forKey: SettingsKeys.apiSavePath) ?? ""
+        siftlyBaseURL = d.string(forKey: SettingsKeys.siftlyBaseURL) ?? "http://127.0.0.1:3000"
+        siftlyAutoSyncEnabled = d.object(forKey: SettingsKeys.siftlyAutoSyncEnabled) as? Bool ?? true
+
+        do {
+            apiKey = try KeychainService.shared.string(
+                forService: Self.sharedAIKeychainService,
+                account: Self.sharedAIKeychainAccount
+            ) ?? ""
+        } catch {
+            apiKey = ""
+        }
+
+        if apiKey.isEmpty, let legacyKey = d.string(forKey: SettingsKeys.apiKey), !legacyKey.isEmpty {
+            apiKey = legacyKey
+            try? KeychainService.shared.setString(
+                legacyKey,
+                forService: Self.sharedAIKeychainService,
+                account: Self.sharedAIKeychainAccount
+            )
+            d.removeObject(forKey: SettingsKeys.apiKey)
+        }
     }
 
     // MARK: - Auto-save via Combine (more reliable than didSet)
@@ -85,6 +136,7 @@ final class AppState: ObservableObject {
     private func setupAutoSave() {
         let d = UserDefaults.standard
 
+        $workspaceMode.dropFirst().sink { d.set($0.rawValue, forKey: SettingsKeys.workspaceMode) }.store(in: &cancellables)
         $layoutMode.dropFirst().sink { d.set($0.rawValue, forKey: SettingsKeys.layoutMode) }.store(in: &cancellables)
         $appearanceMode.dropFirst().sink { d.set($0.rawValue, forKey: SettingsKeys.appearanceMode) }.store(in: &cancellables)
         $isPinned.dropFirst().sink { d.set($0, forKey: SettingsKeys.isPinned) }.store(in: &cancellables)
@@ -95,10 +147,129 @@ final class AppState: ObservableObject {
         $clipboardMonitorEnabled.dropFirst().sink { d.set($0, forKey: SettingsKeys.clipboardMonitorEnabled) }.store(in: &cancellables)
         $obsidianVaultPath.dropFirst().sink { d.set($0, forKey: SettingsKeys.obsidianVaultPath) }.store(in: &cancellables)
         $apiEndpoint.dropFirst().sink { d.set($0, forKey: SettingsKeys.apiEndpoint) }.store(in: &cancellables)
-        $apiKey.dropFirst().sink { d.set($0, forKey: SettingsKeys.apiKey) }.store(in: &cancellables)
+        $apiKey.dropFirst().sink {
+            try? KeychainService.shared.setString(
+                $0,
+                forService: Self.sharedAIKeychainService,
+                account: Self.sharedAIKeychainAccount
+            )
+            d.removeObject(forKey: SettingsKeys.apiKey)
+        }.store(in: &cancellables)
         $apiSelectedModel.dropFirst().sink { d.set($0, forKey: SettingsKeys.apiSelectedModel) }.store(in: &cancellables)
         $apiSystemPrompt.dropFirst().sink { d.set($0, forKey: SettingsKeys.apiSystemPrompt) }.store(in: &cancellables)
         $apiSavePath.dropFirst().sink { d.set($0, forKey: SettingsKeys.apiSavePath) }.store(in: &cancellables)
+        $siftlyBaseURL.dropFirst().sink { d.set($0, forKey: SettingsKeys.siftlyBaseURL) }.store(in: &cancellables)
+        $siftlyAutoSyncEnabled.dropFirst().sink { d.set($0, forKey: SettingsKeys.siftlyAutoSyncEnabled) }.store(in: &cancellables)
+    }
+
+    private func setupModuleAutoSync() {
+        Publishers.CombineLatest4(
+            $apiEndpoint.dropFirst(),
+            $apiKey.dropFirst(),
+            $apiSelectedModel.dropFirst(),
+            $siftlyBaseURL.dropFirst()
+        )
+        .debounce(for: .milliseconds(800), scheduler: RunLoop.main)
+        .sink { [weak self] _, _, _, _ in
+            guard let self, self.siftlyAutoSyncEnabled else { return }
+            self.scheduleModuleSync()
+        }
+        .store(in: &cancellables)
+
+        $siftlyAutoSyncEnabled
+            .dropFirst()
+            .sink { [weak self] enabled in
+                guard let self, enabled else { return }
+                self.scheduleModuleSync()
+            }
+            .store(in: &cancellables)
+    }
+
+    private func scheduleModuleSync() {
+        integrationSyncTask?.cancel()
+        moduleSyncStatuses[OmniModuleRegistry.siftly.id] = ModuleSyncStatus(
+            state: .syncing,
+            message: "正在同步统一 AI 配置…",
+            updatedAt: Date()
+        )
+
+        integrationSyncTask = Task { [weak self] in
+            guard let self else { return }
+            let statuses = await OmniIntegrationService.shared.syncAll(from: self)
+            guard !Task.isCancelled else { return }
+            self.moduleSyncStatuses.merge(statuses) { _, new in new }
+        }
+    }
+
+    var sharedAISettingsSnapshot: SharedAISettingsSnapshot {
+        SharedAISettingsSnapshot(
+            endpoint: apiEndpoint,
+            apiKey: apiKey,
+            model: apiSelectedModel
+        )
+    }
+
+    func syncModule(_ module: OmniModuleDefinition) {
+        integrationSyncTask?.cancel()
+        presentModuleNotice("正在同步 \(module.title)…")
+        moduleSyncStatuses[module.id] = ModuleSyncStatus(
+            state: .syncing,
+            message: "正在同步…",
+            updatedAt: Date()
+        )
+
+        integrationSyncTask = Task { [weak self] in
+            guard let self else { return }
+            let status = await OmniIntegrationService.shared.sync(module, from: self)
+            guard !Task.isCancelled else { return }
+            self.moduleSyncStatuses[module.id] = status
+        }
+    }
+
+    func probeModule(_ module: OmniModuleDefinition) {
+        integrationSyncTask?.cancel()
+        presentModuleNotice("正在检查 \(module.title) 连接…")
+        moduleSyncStatuses[module.id] = ModuleSyncStatus(
+            state: .syncing,
+            message: "正在检查连接…",
+            updatedAt: Date()
+        )
+
+        integrationSyncTask = Task { [weak self] in
+            guard let self else { return }
+            let status = await OmniIntegrationService.shared.probe(
+                module,
+                baseURLOverride: module.id == OmniModuleRegistry.siftly.id ? self.siftlyBaseURL : nil
+            )
+            guard !Task.isCancelled else { return }
+            self.moduleSyncStatuses[module.id] = status
+        }
+    }
+
+    func bootstrapIntegrationsIfNeeded() {
+        if siftlyAutoSyncEnabled,
+           moduleSyncStatuses[OmniModuleRegistry.siftly.id]?.state == .idle,
+           !apiEndpoint.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+           !apiSelectedModel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            scheduleModuleSync()
+        }
+    }
+
+    func baseURL(for module: OmniModuleDefinition) -> String {
+        switch module.id {
+        case OmniModuleRegistry.siftly.id:
+            return siftlyBaseURL
+        default:
+            switch module.launchStyle {
+            case .webApp(let url, _, _):
+                return url
+            }
+        }
+    }
+
+    var gatewayConfigured: Bool {
+        !apiEndpoint.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+        !apiSelectedModel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     func applyAppearance() {
@@ -108,6 +279,56 @@ final class AppState: ObservableObject {
     func attachMainWindow(_ window: NSWindow) {
         mainWindow = window
         updateWindowLevel()
+    }
+
+    func registerModuleLauncher(_ launcher: @escaping (OmniModuleDefinition) -> Bool) {
+        moduleLauncher = launcher
+    }
+
+    func registerSettingsPresenter(_ presenter: @escaping () -> Void) {
+        settingsPresenter = presenter
+    }
+
+    func openModule(_ module: OmniModuleDefinition) {
+        if moduleLauncher?(module) == true {
+            presentModuleNotice("已打开 \(module.title) 窗口", kind: .success)
+            return
+        }
+
+        switch module.launchStyle {
+        case .webApp(let url, _, _):
+            guard let targetURL = URL(string: url) else {
+                presentModuleNotice("\(module.title) 地址无效", kind: .failure)
+                return
+            }
+
+            if NSWorkspace.shared.open(targetURL) {
+                presentModuleNotice("已在浏览器打开 \(module.title)", kind: .success)
+            } else {
+                presentModuleNotice("打开 \(module.title) 失败", kind: .failure)
+            }
+        }
+    }
+
+    func openSettings() {
+        guard let settingsPresenter else {
+            presentModuleNotice("偏好设置窗口当前不可用", kind: .failure)
+            return
+        }
+
+        settingsPresenter()
+        presentModuleNotice("已打开偏好设置", kind: .success)
+    }
+
+    func presentModuleNotice(_ message: String, kind: ModuleActionNotice.Kind = .info) {
+        noticeDismissTask?.cancel()
+        moduleActionNotice = ModuleActionNotice(message: message, kind: kind)
+
+        noticeDismissTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 2_500_000_000)
+            guard !Task.isCancelled else { return }
+            self?.moduleActionNotice = nil
+        }
     }
 
     func updateWindowLevel() {
@@ -122,14 +343,13 @@ struct ContentView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            // Top toolbar
             ToolbarView(appState: appState)
-
-            // Web content area — all webviews always alive, no destroy/recreate
-            WebContentArea(appState: appState)
-
-            // Sync question bar
-            SyncInputBar(appState: appState)
+            if appState.workspaceMode == .modules {
+                ModuleHomeView(appState: appState)
+            } else {
+                WebContentArea(appState: appState)
+                SyncInputBar(appState: appState)
+            }
         }
         .frame(minWidth: 900, minHeight: 600)
         .onAppear {
@@ -137,6 +357,7 @@ struct ContentView: View {
             WebViewManager.shared.updateUserAgentSettings(appState.userAgentSettings)
             WebViewManager.shared.preloadWebViews()
             WebViewManager.shared.syncThemeForAllWebViews(mode: appState.appearanceMode)
+            appState.bootstrapIntegrationsIfNeeded()
         }
         .onChange(of: appState.appearanceMode) { _ in
             appState.applyAppearance()
@@ -160,46 +381,69 @@ struct ToolbarView: View {
 
     var body: some View {
         HStack(spacing: 0) {
-            // Tab buttons
+            TabButton(
+                title: WorkspaceMode.modules.title,
+                icon: WorkspaceMode.modules.iconName,
+                isSelected: appState.workspaceMode == .modules
+            ) {
+                appState.workspaceMode = .modules
+            }
+
+            Divider()
+                .frame(height: 20)
+                .padding(.horizontal, 6)
+
             ForEach(AIProvider.allCases) { provider in
                 TabButton(
                     title: provider.displayName,
                     icon: provider.iconName,
-                    isSelected: appState.selectedTab == provider
+                    isSelected: appState.workspaceMode == .ai && appState.selectedTab == provider
                 ) {
+                    appState.workspaceMode = .ai
                     appState.selectedTab = provider
-                    if provider == .all {
-                        // Keep current layout
-                    }
                 }
             }
 
             Spacer()
 
-            Divider()
-                .frame(height: 20)
-                .padding(.horizontal, 4)
-
-            // Layout switcher
-            ForEach(LayoutMode.allCases, id: \.self) { mode in
+            if appState.workspaceMode == .ai {
                 Button {
-                    appState.layoutMode = mode
-                    appState.selectedTab = .all
+                    if appState.selectedTab == .all {
+                        WebViewManager.shared.startNewChatForAll()
+                    } else {
+                        WebViewManager.shared.startNewChat(for: appState.selectedTab)
+                    }
                 } label: {
-                    Image(systemName: mode.iconName)
+                    Image(systemName: "plus.bubble")
                         .font(.system(size: 12))
                         .frame(width: 28, height: 28)
-                        .background(appState.layoutMode == mode && appState.selectedTab == .all
-                                    ? Color.accentColor.opacity(0.2) : Color.clear)
-                        .cornerRadius(6)
                 }
                 .buttonStyle(.plain)
-                .help(mode.label)
-            }
+                .help("新对话")
 
-            Divider()
-                .frame(height: 20)
-                .padding(.horizontal, 4)
+                Divider()
+                    .frame(height: 20)
+                    .padding(.horizontal, 4)
+                ForEach(LayoutMode.allCases, id: \.self) { mode in
+                    Button {
+                        appState.layoutMode = mode
+                        appState.selectedTab = .all
+                    } label: {
+                        Image(systemName: mode.iconName)
+                            .font(.system(size: 12))
+                            .frame(width: 28, height: 28)
+                            .background(appState.layoutMode == mode && appState.selectedTab == .all
+                                        ? Color.accentColor.opacity(0.2) : Color.clear)
+                            .cornerRadius(6)
+                    }
+                    .buttonStyle(.plain)
+                    .help(mode.label)
+                }
+
+                Divider()
+                    .frame(height: 20)
+                    .padding(.horizontal, 4)
+            }
 
             // Appearance toggle
             Menu {
@@ -239,22 +483,23 @@ struct ToolbarView: View {
             .buttonStyle(.plain)
             .help(appState.isPinned ? "Unpin window" : "Pin on top")
 
-            Divider()
-                .frame(height: 20)
-                .padding(.horizontal, 4)
+            if appState.workspaceMode == .ai {
+                Divider()
+                    .frame(height: 20)
+                    .padding(.horizontal, 4)
 
-            // AI Aggregation button
-            Button {
-                Task { await startAggregation() }
-            } label: {
-                Image(systemName: "brain.head.profile")
-                    .font(.system(size: 12))
-                    .frame(width: 28, height: 28)
-                    .foregroundColor(appState.isAggregating ? .orange : .secondary)
+                Button {
+                    Task { await startAggregation() }
+                } label: {
+                    Image(systemName: "brain.head.profile")
+                        .font(.system(size: 12))
+                        .frame(width: 28, height: 28)
+                        .foregroundColor(appState.isAggregating ? .orange : .secondary)
+                }
+                .buttonStyle(.plain)
+                .disabled(appState.isAggregating)
+                .help("AI 聚合分析")
             }
-            .buttonStyle(.plain)
-            .disabled(appState.isAggregating)
-            .help("AI 聚合分析")
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 4)
@@ -353,6 +598,448 @@ struct TabButton: View {
             .padding(.vertical, 6)
             .background(isSelected ? Color.accentColor.opacity(0.2) : Color.clear)
             .cornerRadius(6)
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+// MARK: - Module Home
+
+struct ModuleHomeView: View {
+    @ObservedObject var appState: AppState
+
+    private var modules: [OmniModuleDefinition] {
+        OmniModuleRegistry.integratedModules
+    }
+
+    private var healthyCount: Int {
+        modules.filter { appState.moduleSyncStatuses[$0.id]?.state == .success }.count
+    }
+
+    private var issueCount: Int {
+        modules.filter { appState.moduleSyncStatuses[$0.id]?.state == .failure }.count
+    }
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 22) {
+                hero
+
+                if let notice = appState.moduleActionNotice {
+                    ModuleActionNoticeBanner(notice: notice)
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                }
+
+                HStack(spacing: 14) {
+                    ModuleMetricCard(
+                        title: "已接入模块",
+                        value: "\(modules.count)",
+                        caption: "统一在 Omni 中管理",
+                        color: .blue
+                    )
+                    ModuleMetricCard(
+                        title: "同步正常",
+                        value: "\(healthyCount)",
+                        caption: "配置已连通",
+                        color: .green
+                    )
+                    ModuleMetricCard(
+                        title: "待处理",
+                        value: "\(issueCount)",
+                        caption: "需要检查模块连接",
+                        color: .orange
+                    )
+                }
+
+                HStack(alignment: .top, spacing: 18) {
+                    gatewayCard
+                    quickActionsCard
+                }
+
+                VStack(alignment: .leading, spacing: 14) {
+                    Text("模块面板")
+                        .font(.system(size: 18, weight: .semibold))
+
+                    ForEach(modules) { module in
+                        ModuleOverviewCard(appState: appState, module: module)
+                    }
+                }
+            }
+            .padding(24)
+        }
+        .background(
+            LinearGradient(
+                colors: [
+                    Color(nsColor: .windowBackgroundColor),
+                    Color.accentColor.opacity(0.06)
+                ],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+        )
+    }
+
+    private var hero: some View {
+        ZStack(alignment: .topLeading) {
+            RoundedRectangle(cornerRadius: 28, style: .continuous)
+                .fill(
+                    LinearGradient(
+                        colors: [
+                            Color.accentColor.opacity(0.18),
+                            Color.blue.opacity(0.08),
+                            Color.black.opacity(0.04)
+                        ],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 28, style: .continuous)
+                        .stroke(Color.white.opacity(0.08), lineWidth: 1)
+                )
+
+            VStack(alignment: .leading, spacing: 12) {
+                Text("模块首页")
+                    .font(.system(size: 30, weight: .bold))
+                Text("把本地工具放进同一个工作台里管理。AI 网关只配置一次，已接入的模块直接复用。")
+                    .font(.system(size: 14))
+                    .foregroundColor(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                HStack(spacing: 10) {
+                    HomeActionButton(title: "进入 AI 工作台", icon: "brain.head.profile") {
+                        appState.workspaceMode = .ai
+                        appState.selectedTab = .all
+                    }
+
+                    HomeActionButton(title: "打开偏好设置", icon: "slider.horizontal.3") {
+                        appState.openSettings()
+                    }
+                }
+            }
+            .padding(26)
+        }
+        .frame(maxWidth: .infinity)
+        .frame(height: 180)
+    }
+
+    private var gatewayCard: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Label("统一 AI 网关", systemImage: "network")
+                .font(.system(size: 17, weight: .semibold))
+
+            ModuleInfoRow(label: "Endpoint", value: appState.apiEndpoint.isEmpty ? "未配置" : appState.apiEndpoint)
+            ModuleInfoRow(label: "Model", value: appState.apiSelectedModel.isEmpty ? "未选择" : appState.apiSelectedModel)
+            ModuleInfoRow(label: "API Key", value: appState.apiKey.isEmpty ? "未配置" : "已保存到钥匙串")
+            ModuleInfoRow(label: "自动同步", value: appState.siftlyAutoSyncEnabled ? "已开启" : "已关闭")
+
+            if !appState.gatewayConfigured {
+                Label("还没完成网关配置，模块暂时不会自动继承 AI 能力。", systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption)
+                    .foregroundColor(.orange)
+            }
+        }
+        .padding(20)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                .fill(Color(nsColor: .controlBackgroundColor).opacity(0.9))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                .stroke(Color.white.opacity(0.05), lineWidth: 1)
+        )
+    }
+
+    private var quickActionsCard: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Label("快捷动作", systemImage: "bolt.fill")
+                .font(.system(size: 17, weight: .semibold))
+
+            HomeActionButton(title: "同步全部模块", icon: "arrow.triangle.2.circlepath") {
+                appState.presentModuleNotice("正在同步全部模块…")
+                for module in modules where module.syncAdapter != nil {
+                    appState.syncModule(module)
+                }
+            }
+
+            HomeActionButton(title: "检查模块连接", icon: "dot.radiowaves.left.and.right") {
+                appState.presentModuleNotice("正在检查模块连接…")
+                for module in modules {
+                    appState.probeModule(module)
+                }
+            }
+
+            if let module = modules.first {
+                HomeActionButton(title: "打开 \(module.title)", icon: module.icon) {
+                    appState.openModule(module)
+                }
+            }
+        }
+        .padding(20)
+        .frame(width: 250, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                .fill(Color(nsColor: .controlBackgroundColor).opacity(0.9))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                .stroke(Color.white.opacity(0.05), lineWidth: 1)
+        )
+    }
+}
+
+struct ModuleOverviewCard: View {
+    @ObservedObject var appState: AppState
+    let module: OmniModuleDefinition
+
+    private var status: ModuleSyncStatus {
+        appState.moduleSyncStatuses[module.id] ?? .idle
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .top) {
+                HStack(spacing: 12) {
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 16, style: .continuous)
+                            .fill(Color.accentColor.opacity(0.12))
+                            .frame(width: 48, height: 48)
+                        Image(systemName: module.icon)
+                            .font(.system(size: 20, weight: .semibold))
+                            .foregroundColor(.accentColor)
+                    }
+
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(module.title)
+                            .font(.system(size: 18, weight: .semibold))
+                        Text(module.subtitle)
+                            .font(.system(size: 13))
+                            .foregroundColor(.secondary)
+                    }
+                }
+
+                Spacer()
+                ModuleStatusBadge(status: status)
+            }
+
+            ModuleInfoRow(label: "模块地址", value: appState.baseURL(for: module))
+            ModuleInfoRow(label: "同步状态", value: status.message)
+
+            if let updatedAt = status.updatedAt {
+                ModuleInfoRow(
+                    label: "最近更新",
+                    value: updatedAt.formatted(date: .omitted, time: .shortened)
+                )
+            }
+
+            HStack(spacing: 10) {
+                HomeActionButton(title: "打开", icon: "arrow.up.right.square") {
+                    appState.openModule(module)
+                }
+
+                HomeActionButton(title: "同步", icon: "arrow.triangle.2.circlepath") {
+                    appState.syncModule(module)
+                }
+
+                HomeActionButton(title: "测试", icon: "antenna.radiowaves.left.and.right") {
+                    appState.probeModule(module)
+                }
+            }
+        }
+        .padding(20)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                .fill(Color(nsColor: .controlBackgroundColor).opacity(0.94))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                .stroke(strokeColor, lineWidth: 1)
+        )
+    }
+
+    private var strokeColor: Color {
+        switch status.state {
+        case .idle:
+            return Color.white.opacity(0.06)
+        case .syncing:
+            return Color.orange.opacity(0.35)
+        case .success:
+            return Color.green.opacity(0.35)
+        case .failure:
+            return Color.red.opacity(0.35)
+        }
+    }
+}
+
+struct ModuleMetricCard: View {
+    let title: String
+    let value: String
+    let caption: String
+    let color: Color
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(title)
+                .font(.system(size: 13, weight: .medium))
+                .foregroundColor(.secondary)
+            Text(value)
+                .font(.system(size: 32, weight: .bold, design: .rounded))
+                .foregroundColor(color)
+            Text(caption)
+                .font(.caption)
+                .foregroundColor(.secondary)
+        }
+        .padding(18)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .fill(Color(nsColor: .controlBackgroundColor).opacity(0.9))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .stroke(color.opacity(0.24), lineWidth: 1)
+        )
+    }
+}
+
+struct ModuleInfoRow: View {
+    let label: String
+    let value: String
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 10) {
+            Text(label)
+                .font(.caption)
+                .foregroundColor(.secondary)
+                .frame(width: 62, alignment: .leading)
+            Text(value)
+                .font(.system(size: 13, weight: .medium, design: .monospaced))
+                .textSelection(.enabled)
+                .foregroundColor(.primary)
+            Spacer(minLength: 0)
+        }
+    }
+}
+
+struct ModuleStatusBadge: View {
+    let status: ModuleSyncStatus
+
+    var body: some View {
+        Text(title)
+            .font(.caption.weight(.semibold))
+            .foregroundColor(color)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(color.opacity(0.12))
+            .clipShape(Capsule())
+    }
+
+    private var title: String {
+        switch status.state {
+        case .idle:
+            return "未同步"
+        case .syncing:
+            return "同步中"
+        case .success:
+            return "已同步"
+        case .failure:
+            return "失败"
+        }
+    }
+
+    private var color: Color {
+        switch status.state {
+        case .idle:
+            return .secondary
+        case .syncing:
+            return .orange
+        case .success:
+            return .green
+        case .failure:
+            return .red
+        }
+    }
+}
+
+struct ModuleActionNoticeBanner: View {
+    let notice: AppState.ModuleActionNotice
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: iconName)
+                .font(.system(size: 13, weight: .semibold))
+            Text(notice.message)
+                .font(.system(size: 13, weight: .medium))
+            Spacer(minLength: 0)
+        }
+        .foregroundColor(foregroundColor)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(backgroundColor)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .stroke(foregroundColor.opacity(0.18), lineWidth: 1)
+        )
+    }
+
+    private var iconName: String {
+        switch notice.kind {
+        case .info:
+            return "info.circle.fill"
+        case .success:
+            return "checkmark.circle.fill"
+        case .failure:
+            return "xmark.circle.fill"
+        }
+    }
+
+    private var foregroundColor: Color {
+        switch notice.kind {
+        case .info:
+            return .accentColor
+        case .success:
+            return .green
+        case .failure:
+            return .red
+        }
+    }
+
+    private var backgroundColor: Color {
+        switch notice.kind {
+        case .info:
+            return Color.accentColor.opacity(0.10)
+        case .success:
+            return Color.green.opacity(0.10)
+        case .failure:
+            return Color.red.opacity(0.10)
+        }
+    }
+}
+
+struct HomeActionButton: View {
+    let title: String
+    let icon: String
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 8) {
+                Image(systemName: icon)
+                    .font(.system(size: 12, weight: .semibold))
+                Text(title)
+                    .font(.system(size: 13, weight: .semibold))
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 9)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color.accentColor.opacity(0.12))
+            .cornerRadius(12)
         }
         .buttonStyle(.plain)
     }

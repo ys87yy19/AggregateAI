@@ -114,6 +114,23 @@ final class ObsidianService {
         try markdown.write(to: fileURL, atomically: true, encoding: .utf8)
     }
 
+    /// Open a file in Obsidian using the obsidian:// URL scheme
+    func openInObsidian(fileURL: URL) {
+        // Use obsidian://open?path= to open the specific file
+        var components = URLComponents(string: "obsidian://open")!
+        components.queryItems = [URLQueryItem(name: "path", value: fileURL.path)]
+        if let url = components.url {
+            NSWorkspace.shared.open(url)
+        }
+    }
+
+    /// Simply launch Obsidian app
+    func openObsidian() {
+        if let url = URL(string: "obsidian://") {
+            NSWorkspace.shared.open(url)
+        }
+    }
+
     enum ObsidianError: LocalizedError {
         case noVaultConfigured
         case accessDenied

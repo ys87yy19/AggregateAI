@@ -2,6 +2,7 @@ import Foundation
 
 enum SettingsKeys {
     // General
+    static let workspaceMode = "workspaceMode"
     static let layoutMode = "layoutMode"
     static let appearanceMode = "appearanceMode"
     static let isPinned = "isPinned"
@@ -28,4 +29,8 @@ enum SettingsKeys {
     static let apiSystemPrompt = "apiSystemPrompt"
     static let apiSaveBookmark = "apiSaveBookmark"
     static let apiSavePath = "apiSavePath"
+
+    // Feature 16: Integrated modules
+    static let siftlyBaseURL = "siftlyBaseURL"
+    static let siftlyAutoSyncEnabled = "siftlyAutoSyncEnabled"
 }

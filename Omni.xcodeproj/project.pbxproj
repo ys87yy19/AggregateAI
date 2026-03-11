@@ -23,6 +23,8 @@
 		CC000001 /* APIService.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC000011 /* APIService.swift */; };
 		CC000002 /* AggregationResultView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC000012 /* AggregationResultView.swift */; };
 		DD000001 /* TwitterCSSInjector.swift in Sources */ = {isa = PBXBuildFile; fileRef = DD000011 /* TwitterCSSInjector.swift */; };
+		EE000001 /* KeychainService.swift in Sources */ = {isa = PBXBuildFile; fileRef = EE000011 /* KeychainService.swift */; };
+		EE000002 /* OmniIntegrationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = EE000012 /* OmniIntegrationService.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -44,6 +46,8 @@
 		CC000011 /* APIService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIService.swift; sourceTree = "<group>"; };
 		CC000012 /* AggregationResultView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AggregationResultView.swift; sourceTree = "<group>"; };
 		DD000011 /* TwitterCSSInjector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TwitterCSSInjector.swift; sourceTree = "<group>"; };
+		EE000011 /* KeychainService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainService.swift; sourceTree = "<group>"; };
+		EE000012 /* OmniIntegrationService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OmniIntegrationService.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -101,6 +105,8 @@
 				BB000007 /* ClipboardMonitor.swift */,
 				CC000011 /* APIService.swift */,
 				DD000011 /* TwitterCSSInjector.swift */,
+				EE000011 /* KeychainService.swift */,
+				EE000012 /* OmniIntegrationService.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -197,6 +203,8 @@
 				CC000001 /* APIService.swift in Sources */,
 				CC000002 /* AggregationResultView.swift in Sources */,
 				DD000001 /* TwitterCSSInjector.swift in Sources */,
+				EE000001 /* KeychainService.swift in Sources */,
+				EE000002 /* OmniIntegrationService.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -331,6 +339,8 @@
 				DEVELOPMENT_TEAM = "";
 				ENABLE_HARDENED_RUNTIME = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = Omni;
+				INFOPLIST_KEY_CFBundleName = Omni;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
 				INFOPLIST_KEY_LSUIElement = YES;
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
@@ -354,6 +364,8 @@
 				DEVELOPMENT_TEAM = "";
 				ENABLE_HARDENED_RUNTIME = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = Omni;
+				INFOPLIST_KEY_CFBundleName = Omni;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
 				INFOPLIST_KEY_LSUIElement = YES;
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";

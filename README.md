@@ -4,6 +4,14 @@
 
 应用使用 `SwiftUI + AppKit + WKWebView` 实现，适合个人自用、对比多家 AI 回复，或者作为本地桌面聚合器继续扩展。
 
+现在它也开始承担一个新角色：
+
+- 作为本地 AI 工作台的宿主
+- 统一管理本地中转 API 配置
+- 把同一套 AI 配置下发到接入模块（当前已接 `Siftly`）
+
+架构说明见 [ARCHITECTURE.md](ARCHITECTURE.md)。
+
 ## 功能概览
 
 - 菜单栏常驻，默认不占用 Dock

@@ -188,9 +188,11 @@ struct AggregationResultView: View {
 
         if let folderURL = resolveSaveFolderURL() {
             do {
-                try saveToFolder(folderURL, filename: sanitized, markdown: markdown)
+                let fileURL = try saveToFolder(folderURL, filename: sanitized, markdown: markdown)
                 alertMessage = "已保存「\(title)」到 \(appState.apiSavePath)"
                 showAlert = true
+                // 保存成功后打开 Obsidian 并定位到该笔记
+                ObsidianService.shared.openInObsidian(fileURL: fileURL)
                 return
             } catch {
                 alertMessage = "保存失败: \(error.localizedDescription)"
@@ -260,7 +262,8 @@ struct AggregationResultView: View {
         return url
     }
 
-    private func saveToFolder(_ folderURL: URL, filename: String, markdown: String) throws {
+    @discardableResult
+    private func saveToFolder(_ folderURL: URL, filename: String, markdown: String) throws -> URL {
         guard folderURL.startAccessingSecurityScopedResource() else {
             throw NSError(domain: "Omni", code: -1,
                           userInfo: [NSLocalizedDescriptionKey: "无法访问保存目录，请在偏好设置 > API 中重新选择。"])
@@ -269,6 +272,7 @@ struct AggregationResultView: View {
 
         let fileURL = folderURL.appendingPathComponent("\(filename).md")
         try markdown.write(to: fileURL, atomically: true, encoding: .utf8)
+        return fileURL
     }
 
     // MARK: - Export
