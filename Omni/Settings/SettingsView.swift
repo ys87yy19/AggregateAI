@@ -715,7 +715,7 @@ struct IntegrationsSettingsTab: View {
 
                 HStack {
                     Text("项目路径:")
-                    TextField("/Users/xwx0316/Documents/AI/antigravity-debugger", text: $appState.antigravityInstallPath)
+                    TextField("选择或输入项目路径…", text: $appState.antigravityInstallPath)
                         .textFieldStyle(.roundedBorder)
                 }
 
