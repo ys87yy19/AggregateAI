@@ -362,7 +362,6 @@ struct OmniModuleDefinition: Identifiable, Equatable {
 
     enum SyncAdapter: Equatable {
         case siftly
-        case antigravity
     }
 
     let id: String
@@ -422,21 +421,9 @@ enum OmniModuleRegistry {
         )
     )
 
-    static let antigravity = OmniModuleDefinition(
-        id: "antigravity",
-        title: "Antigravity Debugger",
-        subtitle: "账号诊断与 AI 自动修复",
-        icon: "wrench.and.screwdriver.fill",
-        launchStyle: .webApp(url: "http://127.0.0.1:4173", width: 1440, height: 920),
-        syncAdapter: .antigravity,
-        managedDocker: nil,
-        updateDefinition: nil
-    )
-
     static let integratedModules: [OmniModuleDefinition] = [
         omniRoute,
         siftly,
-        antigravity,
     ]
 
     static func module(id: String) -> OmniModuleDefinition? {
@@ -1479,14 +1466,6 @@ final class OmniIntegrationService {
             switch module.syncAdapter {
             case .siftly:
                 try await syncSiftly(module: module, snapshot: snapshot, baseURLOverride: appState.siftlyBaseURL)
-            case .antigravity:
-                try await syncAntigravity(
-                    module: module,
-                    snapshot: snapshot,
-                    baseURLOverride: appState.antigravityBaseURL,
-                    installPath: appState.antigravityInstallPath,
-                    autoFixEnabled: appState.antigravityAutoFixEnabled
-                )
             case .none:
                 return ModuleSyncStatus(
                     state: .success,
@@ -1512,8 +1491,7 @@ final class OmniIntegrationService {
     func probe(_ module: OmniModuleDefinition, baseURLOverride: String? = nil) async -> ModuleSyncStatus {
         do {
             let baseURL = try resolvedBaseURL(for: module, override: baseURLOverride)
-            let path = module.syncAdapter == .antigravity ? "api/runner/prefill" : "api/settings"
-            let url = baseURL.appendingPathComponent(path)
+            let url = baseURL.appendingPathComponent("api/settings")
             var request = URLRequest(url: url)
             request.httpMethod = "GET"
             request.timeoutInterval = 8
@@ -1559,31 +1537,6 @@ final class OmniIntegrationService {
         try await postJSON(
             to: baseURL.appendingPathComponent("api/settings"),
             body: ["openaiModel": snapshot.siftlyOpenAIModel]
-        )
-    }
-
-    private func syncAntigravity(
-        module: OmniModuleDefinition,
-        snapshot: SharedAISettingsSnapshot,
-        baseURLOverride: String,
-        installPath: String,
-        autoFixEnabled: Bool
-    ) async throws {
-        let baseURL = try resolvedBaseURL(for: module, override: baseURLOverride)
-        let moduleAddress = baseURLOverride.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            ? baseURL.absoluteString
-            : baseURLOverride.trimmingCharacters(in: .whitespacesAndNewlines)
-
-        try await postJSON(
-            to: baseURL.appendingPathComponent("api/runner/prefill"),
-            body: [
-                "moduleAddress": moduleAddress,
-                "installPath": installPath.trimmingCharacters(in: .whitespacesAndNewlines),
-                "autoFixEnabled": autoFixEnabled ? "true" : "false",
-                "aiEndpoint": snapshot.normalizedEndpoint,
-                "aiApiKey": snapshot.normalizedApiKey,
-                "aiModel": snapshot.normalizedModel
-            ]
         )
     }
 

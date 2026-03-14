@@ -39,11 +39,6 @@ enum SettingsKeys {
     // Feature 16: Integrated modules
     static let siftlyBaseURL = "siftlyBaseURL"
     static let siftlyAutoSyncEnabled = "siftlyAutoSyncEnabled"
-    static let antigravityBaseURL = "antigravityBaseURL"
-    static let antigravityInstallPath = "antigravityInstallPath"
-    static let antigravityEmail = "antigravityEmail"
-    static let antigravityProjectId = "antigravityProjectId"
-    static let antigravityAutoFixEnabled = "antigravityAutoFixEnabled"
 
     // Persisted app setting keys (used by defaults suite migration)
     static let persistedKeys: [String] = [
@@ -72,11 +67,6 @@ enum SettingsKeys {
         omniRoutePreferredModel,
         siftlyBaseURL,
         siftlyAutoSyncEnabled,
-        antigravityBaseURL,
-        antigravityInstallPath,
-        antigravityEmail,
-        antigravityProjectId,
-        antigravityAutoFixEnabled,
     ]
 }
 

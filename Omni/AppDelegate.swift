@@ -14,6 +14,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var serviceWindows: [String: NSWindow] = [:]
     private var serviceWebViews: [String: WKWebView] = [:]
     private var serviceWindowDelegates: [String: ServiceWindowDelegate] = [:]
+    private var managedModuleProcesses: [String: Process] = [:]
     private var hotKeyRef: EventHotKeyRef?
     private var hotKeyHandlerRef: EventHandlerRef?
     private var cancellables: [AnyCancellable] = []
@@ -340,18 +341,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case .webApp(_, let width, let height):
             let resolvedURL = appState.baseURL(for: module)
 
-            if module.id == OmniModuleRegistry.antigravity.id {
+            if module.id == OmniModuleRegistry.siftly.id {
                 Task { @MainActor in
-                    appState.presentModuleNotice("正在检查 Antigravity 服务…")
-                    let ready = await appState.ensureAntigravityRunnerForLaunch()
-                    if !ready {
-                        appState.presentModuleNotice("Antigravity 未就绪，已尝试自动启动。可在设置中点击「预热运行器」查看状态", kind: .failure)
+                    let ready = await ensureSiftlyReady(module: module, resolvedURL: resolvedURL)
+                    guard ready else {
+                        appState.presentModuleNotice("Siftly 未启动，已尝试自动拉起。查看 /tmp/omni-siftly.log", kind: .failure)
+                        return
                     }
 
-                    if ready {
-                        let syncStatus = await OmniIntegrationService.shared.sync(module, from: appState)
-                        appState.moduleSyncStatuses[module.id] = syncStatus
-                    }
+                    let syncStatus = await OmniIntegrationService.shared.sync(module, from: appState)
+                    appState.moduleSyncStatuses[module.id] = syncStatus
 
                     openServiceWindow(
                         WebService(
@@ -380,6 +379,103 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             )
             return true
         }
+    }
+
+    private func ensureSiftlyReady(module: OmniModuleDefinition, resolvedURL: String) async -> Bool {
+        guard let url = URL(string: resolvedURL) else { return false }
+
+        if await probeService(url) {
+            return true
+        }
+
+        appState.presentModuleNotice("Siftly 未运行，正在启动…")
+        guard await startSiftlyProcess(module: module, port: url.port ?? 3000) else {
+            return false
+        }
+
+        for _ in 0..<20 {
+            try? await Task.sleep(nanoseconds: 1_000_000_000)
+            if await probeService(url) {
+                return true
+            }
+        }
+
+        return false
+    }
+
+    private func probeService(_ url: URL) async -> Bool {
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.timeoutInterval = 3
+
+        do {
+            let (_, response) = try await URLSession.shared.data(for: request)
+            guard let http = response as? HTTPURLResponse else { return false }
+            return (200..<400).contains(http.statusCode)
+        } catch {
+            return false
+        }
+    }
+
+    private func startSiftlyProcess(module: OmniModuleDefinition, port: Int) async -> Bool {
+        if let existingProcess = managedModuleProcesses[module.id], existingProcess.isRunning {
+            return true
+        }
+        managedModuleProcesses.removeValue(forKey: module.id)
+
+        guard let installPath = module.updateDefinition?.installPathOverride else {
+            return false
+        }
+
+        let logURL = URL(fileURLWithPath: "/tmp/omni-siftly.log")
+        FileManager.default.createFile(atPath: logURL.path, contents: nil)
+
+        do {
+            let logHandle = try FileHandle(forWritingTo: logURL)
+            try logHandle.truncate(atOffset: 0)
+
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/bin/bash")
+            process.currentDirectoryURL = URL(fileURLWithPath: installPath, isDirectory: true)
+            process.arguments = ["./start.sh"]
+
+            var environment = ProcessInfo.processInfo.environment
+            environment["SIFTLY_SKIP_BROWSER"] = "1"
+            environment["HOST"] = "127.0.0.1"
+            environment["PORT"] = "\(port)"
+            environment["PATH"] = normalizedShellPath(existingPath: environment["PATH"] ?? "")
+            process.environment = environment
+
+            let nullInputHandle = try FileHandle(forReadingFrom: URL(fileURLWithPath: "/dev/null"))
+            process.standardInput = nullInputHandle
+            process.standardOutput = logHandle
+            process.standardError = logHandle
+
+            process.terminationHandler = { [weak self] proc in
+                try? logHandle.close()
+                try? nullInputHandle.close()
+                Task { @MainActor [weak self] in
+                    guard let self else { return }
+                    if self.managedModuleProcesses[module.id] === proc {
+                        self.managedModuleProcesses.removeValue(forKey: module.id)
+                    }
+                }
+            }
+
+            try process.run()
+            managedModuleProcesses[module.id] = process
+            return true
+        }
+        catch {
+            return false
+        }
+    }
+
+    private func normalizedShellPath(existingPath: String) -> String {
+        let requiredPrefixes = ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin", "/usr/sbin", "/sbin"]
+        return (requiredPrefixes + [existingPath])
+            .filter { !$0.isEmpty }
+            .joined(separator: ":")
     }
 
     // MARK: - Menu Actions
@@ -513,6 +609,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        for process in managedModuleProcesses.values where process.isRunning {
+            process.terminate()
+        }
+        managedModuleProcesses.removeAll()
         unregisterGlobalHotKey()
     }
 
