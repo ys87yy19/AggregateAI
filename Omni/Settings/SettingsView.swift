@@ -154,7 +154,7 @@ struct ObsidianSettingsTab: View {
                     if !appState.obsidianVaultPath.isEmpty {
                         Button("清除") {
                             appState.obsidianVaultPath = ""
-                            UserDefaults.standard.removeObject(forKey: SettingsKeys.obsidianVaultBookmark)
+                            OmniSettingsStore.shared.removeObject(forKey: SettingsKeys.obsidianVaultBookmark)
                         }
                         .foregroundColor(.red)
                     }
@@ -183,26 +183,74 @@ struct APISettingsTab: View {
     @State private var testTotal: Int = 0
     @State private var speedResults: [APIService.SpeedTestResult] = []
 
+    private var selectedModelBinding: Binding<String> {
+        Binding(
+            get: {
+                appState.gatewaySource == .custom
+                    ? appState.customAPISelectedModel
+                    : appState.omniRoutePreferredModel
+            },
+            set: { newValue in
+                if appState.gatewaySource == .custom {
+                    appState.customAPISelectedModel = newValue
+                } else {
+                    appState.omniRoutePreferredModel = newValue
+                }
+            }
+        )
+    }
+
     var body: some View {
         Form {
             Section("统一 AI 网关") {
-                HStack {
-                    Text("API 地址:")
-                    TextField("http://127.0.0.1:8317", text: $appState.apiEndpoint)
-                        .textFieldStyle(.roundedBorder)
+                Picker("Gateway Source", selection: $appState.gatewaySource) {
+                    ForEach(GatewaySource.allCases, id: \.self) { source in
+                        Text(source.displayName).tag(source)
+                    }
+                }
+                .pickerStyle(.segmented)
+
+                if appState.gatewaySource == .custom {
+                    HStack {
+                        Text("API 地址:")
+                        TextField("http://127.0.0.1:8317", text: $appState.customAPIEndpoint)
+                            .textFieldStyle(.roundedBorder)
+                    }
+
+                    HStack {
+                        Text("API Key:")
+                        SecureField("可选", text: $appState.customAPIKey)
+                            .textFieldStyle(.roundedBorder)
+                    }
+                } else {
+                    HStack {
+                        Text("Dashboard:")
+                        TextField("http://127.0.0.1:20128", text: $appState.omniRouteDashboardURL)
+                            .textFieldStyle(.roundedBorder)
+                    }
+
+                    HStack {
+                        Text("API 地址:")
+                        TextField("http://127.0.0.1:20129", text: $appState.omniRouteAPIURL)
+                            .textFieldStyle(.roundedBorder)
+                    }
+
+                    HStack {
+                        Text("Endpoint Key:")
+                        SecureField("在 OmniRoute Dashboard 中创建", text: $appState.omniRouteEndpointKey)
+                            .textFieldStyle(.roundedBorder)
+                    }
                 }
 
-                HStack {
-                    Text("API Key:")
-                    SecureField("可选", text: $appState.apiKey)
-                        .textFieldStyle(.roundedBorder)
-                }
+                ModuleInfoRow(label: "当前生效", value: appState.apiEndpoint.isEmpty ? "未配置" : appState.apiEndpoint)
+                ModuleInfoRow(label: "当前模型", value: selectedModelBinding.wrappedValue.isEmpty ? "未选择" : selectedModelBinding.wrappedValue)
+                ModuleInfoRow(label: "密钥状态", value: appState.apiKey.isEmpty ? "未配置" : "已保存到钥匙串")
 
-                Text("Omni 会把这套地址、模型和 API Key 作为统一网关配置，供聚合能力和已接入模块复用。")
+                Text("Omni 会把当前来源解析后的地址、模型和 API Key 作为统一网关配置，供聚合能力和已接入模块复用。")
                     .font(.caption)
                     .foregroundColor(.secondary)
 
-                Text("API Key 会保存在 macOS 钥匙串，不再落到明文 UserDefaults。")
+                Text("所有密钥都会保存在 macOS 钥匙串，不再落到明文 UserDefaults。")
                     .font(.caption2)
                     .foregroundColor(.secondary)
             }
@@ -236,7 +284,7 @@ struct APISettingsTab: View {
                 }
 
                 if !appState.apiAvailableModels.isEmpty {
-                    Picker("模型", selection: $appState.apiSelectedModel) {
+                    Picker("模型", selection: selectedModelBinding) {
                         Text("请选择...").tag("")
                         ForEach(appState.apiAvailableModels, id: \.self) { model in
                             HStack {
@@ -253,8 +301,8 @@ struct APISettingsTab: View {
                             }.tag(model)
                         }
                     }
-                } else if !appState.apiSelectedModel.isEmpty {
-                    Text("当前模型: \(appState.apiSelectedModel)")
+                } else if !selectedModelBinding.wrappedValue.isEmpty {
+                    Text("当前模型: \(selectedModelBinding.wrappedValue)")
                         .font(.caption)
                         .foregroundColor(.secondary)
                 } else {
@@ -283,7 +331,7 @@ struct APISettingsTab: View {
 
                         ForEach(sortedResults, id: \.model) { result in
                             Button {
-                                appState.apiSelectedModel = result.model
+                                selectedModelBinding.wrappedValue = result.model
                             } label: {
                                 HStack(spacing: 6) {
                                     if let rank = rankOf(result) {
@@ -308,7 +356,7 @@ struct APISettingsTab: View {
                                             .foregroundColor(speedColor(ms: result.latencyMs))
                                     }
 
-                                    if appState.apiSelectedModel == result.model {
+                                    if selectedModelBinding.wrappedValue == result.model {
                                         Image(systemName: "checkmark.circle.fill")
                                             .foregroundColor(.accentColor)
                                             .font(.system(size: 10))
@@ -317,7 +365,7 @@ struct APISettingsTab: View {
                                 .padding(.vertical, 2)
                                 .padding(.horizontal, 6)
                                 .background(
-                                    appState.apiSelectedModel == result.model
+                                    selectedModelBinding.wrappedValue == result.model
                                         ? Color.accentColor.opacity(0.1)
                                         : Color.clear
                                 )
@@ -375,7 +423,7 @@ struct APISettingsTab: View {
                     if !appState.apiSavePath.isEmpty {
                         Button("清除") {
                             appState.apiSavePath = ""
-                            UserDefaults.standard.removeObject(forKey: SettingsKeys.apiSaveBookmark)
+                            OmniSettingsStore.shared.removeObject(forKey: SettingsKeys.apiSaveBookmark)
                         }
                         .foregroundColor(.red)
                     }
@@ -468,8 +516,8 @@ struct APISettingsTab: View {
                     apiKey: appState.apiKey
                 )
                 appState.apiAvailableModels = models
-                if appState.apiSelectedModel.isEmpty, let first = models.first {
-                    appState.apiSelectedModel = first
+                if selectedModelBinding.wrappedValue.isEmpty, let first = models.first {
+                    selectedModelBinding.wrappedValue = first
                 }
             } catch {
                 fetchError = error.localizedDescription
@@ -492,7 +540,7 @@ struct APISettingsTab: View {
                 includingResourceValuesForKeys: nil,
                 relativeTo: nil
             ) {
-                UserDefaults.standard.set(bookmarkData, forKey: SettingsKeys.apiSaveBookmark)
+                OmniSettingsStore.shared.set(bookmarkData, forKey: SettingsKeys.apiSaveBookmark)
                 appState.apiSavePath = url.path
             }
         }
@@ -510,6 +558,84 @@ struct IntegrationsSettingsTab: View {
                 Text("Omni 现在作为统一 AI 配置中心。后续接入的新模块，只要在这里登记，就可以直接复用同一套网关地址、模型和 API Key。")
                     .font(.caption)
                     .foregroundColor(.secondary)
+            }
+
+            Section("OmniRoute（受管 Docker 模块）") {
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack {
+                        Label("OmniRoute", systemImage: OmniModuleRegistry.omniRoute.icon)
+                            .font(.headline)
+                        Spacer()
+                        ManagedRuntimeBadge(runtime: appState.managedModuleRuntimes[OmniModuleRegistry.omniRoute.id] ?? ManagedDockerModuleRuntime.idle())
+                    }
+
+                    Text(OmniModuleRegistry.omniRoute.subtitle)
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+
+                ModuleInfoRow(label: "Dashboard", value: appState.omniRouteDashboardURL)
+                ModuleInfoRow(label: "API", value: appState.omniRouteAPIURL)
+
+                if let runtime = appState.managedModuleRuntimes[OmniModuleRegistry.omniRoute.id] {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(runtime.details)
+                            .font(.caption)
+                            .foregroundColor(managedRuntimeColor(runtime))
+
+                        if let updatedAt = runtime.updatedAt as Date? {
+                            Text("最近更新时间: \(updatedAt.formatted(date: .omitted, time: .shortened))")
+                                .font(.caption2)
+                                .foregroundColor(.secondary)
+                        }
+
+                        if let error = runtime.lastError, !error.isEmpty {
+                            Text(error)
+                                .font(.caption2)
+                                .foregroundColor(.red)
+                        }
+                    }
+                }
+
+                HStack {
+                    Button("刷新状态") {
+                        appState.refreshManagedModuleStatus(OmniModuleRegistry.omniRoute)
+                    }
+                    Button("启动") {
+                        appState.startManagedModule(OmniModuleRegistry.omniRoute)
+                    }
+                    Button("停止") {
+                        appState.stopManagedModule(OmniModuleRegistry.omniRoute)
+                    }
+                    Button("重启") {
+                        appState.restartManagedModule(OmniModuleRegistry.omniRoute)
+                    }
+                }
+
+                HStack {
+                    Button("查看日志") {
+                        appState.fetchManagedModuleLogs(OmniModuleRegistry.omniRoute)
+                    }
+                    Button("健康检查") {
+                        appState.probeManagedModule(OmniModuleRegistry.omniRoute)
+                    }
+                    Button("打开 Dashboard") {
+                        (NSApp.delegate as? AppDelegate)?.openIntegratedModule(id: OmniModuleRegistry.omniRoute.id)
+                    }
+                    Button("设为默认网关") {
+                        appState.setModuleAsDefaultGateway(OmniModuleRegistry.omniRoute)
+                    }
+                }
+
+                if let logs = appState.managedModuleLogs[OmniModuleRegistry.omniRoute.id], !logs.isEmpty {
+                    Text(logs)
+                        .font(.system(size: 11, design: .monospaced))
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(8)
+                        .background(Color(nsColor: .textBackgroundColor))
+                        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                }
             }
 
             Section("Siftly 集成") {
@@ -566,6 +692,119 @@ struct IntegrationsSettingsTab: View {
                     .font(.caption)
                     .foregroundColor(.secondary)
             }
+
+            Section("Antigravity 账号修复") {
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack {
+                        Label("Antigravity Debugger", systemImage: OmniModuleRegistry.antigravity.icon)
+                            .font(.headline)
+                        Spacer()
+                        statusBadge(for: appState.moduleSyncStatuses[OmniModuleRegistry.antigravity.id] ?? .idle)
+                    }
+
+                    Text(OmniModuleRegistry.antigravity.subtitle)
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+
+                HStack {
+                    Text("模块地址:")
+                    TextField("http://127.0.0.1:4173", text: $appState.antigravityBaseURL)
+                        .textFieldStyle(.roundedBorder)
+                }
+
+                HStack {
+                    Text("项目路径:")
+                    TextField("/Users/xwx0316/Documents/AI/antigravity-debugger", text: $appState.antigravityInstallPath)
+                        .textFieldStyle(.roundedBorder)
+                }
+
+                HStack {
+                    Text("Google 邮箱:")
+                    TextField("your-email@gmail.com", text: $appState.antigravityEmail)
+                        .textFieldStyle(.roundedBorder)
+                }
+
+                HStack {
+                    Text("项目 ID:")
+                    TextField("可选", text: $appState.antigravityProjectId)
+                        .textFieldStyle(.roundedBorder)
+                }
+
+                Toggle("诊断后自动执行 AI 修复（使用统一 AI 网关）", isOn: $appState.antigravityAutoFixEnabled)
+
+                HStack {
+                    Button("检查执行器") {
+                        appState.prepareAntigravityRunner()
+                    }
+                    .disabled(appState.antigravityIsRunningWorkflow)
+
+                    Button("打开模块") {
+                        (NSApp.delegate as? AppDelegate)?.openIntegratedModule(id: OmniModuleRegistry.antigravity.id)
+                    }
+
+                    Button("仅执行诊断") {
+                        appState.runAntigravityDiagnosisOnly()
+                    }
+                    .disabled(appState.antigravityIsRunningWorkflow)
+
+                    Button("诊断 + AI 修复") {
+                        appState.runAntigravityDiagnosisAndAutoRepair()
+                    }
+                    .disabled(appState.antigravityIsRunningWorkflow)
+
+                    Button("清空日志") {
+                        appState.clearAntigravityLogs()
+                    }
+                    .disabled(appState.antigravityIsRunningWorkflow)
+                }
+
+                if appState.antigravityIsRunningWorkflow {
+                    HStack(spacing: 8) {
+                        ProgressView()
+                            .controlSize(.small)
+                        Text("正在执行流程，请稍候…")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                }
+
+                ModuleInfoRow(label: "执行器状态", value: appState.antigravityRunnerStatus)
+
+                if !appState.antigravityDiagnosisLog.isEmpty {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("诊断日志")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                        Text(appState.antigravityDiagnosisLog)
+                            .font(.system(size: 11, design: .monospaced))
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(8)
+                            .background(Color(nsColor: .textBackgroundColor))
+                            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    }
+                }
+
+                if !appState.antigravityAutoFixLog.isEmpty {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("AI 自动修复日志")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                        Text(appState.antigravityAutoFixLog)
+                            .font(.system(size: 11, design: .monospaced))
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(8)
+                            .background(Color(nsColor: .textBackgroundColor))
+                            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    }
+                }
+
+                Text("流程：先调用 Antigravity 本地执行器完成诊断，再把诊断结果交给统一 AI 生成修复命令，并在安全白名单内自动执行。")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
         }
         .formStyle(.grouped)
     }
@@ -602,6 +841,67 @@ struct IntegrationsSettingsTab: View {
             return .green
         case .failure:
             return .red
+        }
+    }
+
+    private func managedRuntimeColor(_ runtime: ManagedDockerModuleRuntime) -> Color {
+        switch runtime.state {
+        case .dockerUnavailable, .failure:
+            return .red
+        case .notInstalled:
+            return .secondary
+        case .stopped:
+            return .orange
+        case .running:
+            return .green
+        case .unhealthy:
+            return .yellow
+        }
+    }
+}
+
+struct ManagedRuntimeBadge: View {
+    let runtime: ManagedDockerModuleRuntime
+
+    var body: some View {
+        Text(title)
+            .font(.caption)
+            .foregroundColor(color)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(color.opacity(0.12))
+            .clipShape(Capsule())
+    }
+
+    private var title: String {
+        switch runtime.state {
+        case .dockerUnavailable:
+            return "Docker 不可用"
+        case .notInstalled:
+            return "未安装"
+        case .stopped:
+            return "已停止"
+        case .running:
+            return "运行中"
+        case .unhealthy:
+            return "异常"
+        case .failure:
+            return "失败"
+        }
+    }
+
+    private var color: Color {
+        switch runtime.state {
+        case .dockerUnavailable, .failure:
+            return .red
+        case .notInstalled:
+            return .secondary
+        case .stopped:
+            return .orange
+        case .running:
+            return .green
+        case .unhealthy:
+            return .yellow
         }
     }
 }

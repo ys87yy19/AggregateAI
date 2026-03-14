@@ -8,15 +8,16 @@ final class ExportService {
 
     func extractContent(from provider: AIProvider) async throws -> String {
         guard provider != .all else {
-            // Extract from all providers and concatenate
-            var allContent = ""
-            for p in AIProvider.providers {
-                let content = try await extractSingleProviderContent(p)
-                if !content.isEmpty {
-                    allContent += "# \(p.displayName)\n\n\(content)\n\n---\n\n"
-                }
+            // Extract from all providers concurrently
+            async let c0 = extractSingleProviderContent(AIProvider.providers[0])
+            async let c1 = extractSingleProviderContent(AIProvider.providers[1])
+            async let c2 = extractSingleProviderContent(AIProvider.providers[2])
+            let results = try await (c0, c1, c2)
+            let contents = [results.0, results.1, results.2]
+            return zip(AIProvider.providers, contents).reduce("") { acc, pair in
+                let (p, content) = pair
+                return content.isEmpty ? acc : acc + "# \(p.displayName)\n\n\(content)\n\n---\n\n"
             }
-            return allContent
         }
         return try await extractSingleProviderContent(provider)
     }
@@ -102,7 +103,20 @@ final class ExportService {
         panel.canCreateDirectories = true
 
         if panel.runModal() == .OK, let url = panel.url {
-            try? markdown.write(to: url, atomically: true, encoding: .utf8)
+            do {
+                try markdown.write(to: url, atomically: true, encoding: .utf8)
+            } catch {
+                showWriteErrorAlert(error)
+            }
         }
+    }
+
+    private func showWriteErrorAlert(_ error: Error) {
+        let alert = NSAlert()
+        alert.messageText = "导出失败"
+        alert.informativeText = error.localizedDescription
+        alert.alertStyle = .critical
+        alert.addButton(withTitle: "OK")
+        alert.runModal()
     }
 }

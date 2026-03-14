@@ -2,6 +2,23 @@ import SwiftUI
 import WebKit
 import OSLog
 
+// MARK: - Weak Script Message Handler Proxy (breaks retain cycle)
+
+private final class WeakScriptMessageHandler: NSObject, WKScriptMessageHandler {
+    weak var target: (NSObject & WKScriptMessageHandler)?
+
+    init(target: NSObject & WKScriptMessageHandler) {
+        self.target = target
+    }
+
+    func userContentController(
+        _ userContentController: WKUserContentController,
+        didReceive message: WKScriptMessage
+    ) {
+        target?.userContentController(userContentController, didReceive: message)
+    }
+}
+
 // MARK: - Persistent WebView Manager
 
 @MainActor
@@ -9,7 +26,7 @@ final class WebViewManager: NSObject, WKNavigationDelegate, WKScriptMessageHandl
     static let shared = WebViewManager()
 
     private var webViews: [AIProvider: WKWebView] = [:]
-    private var pendingQuestions: [AIProvider: String] = [:]
+    private var pendingQuestions: [AIProvider: [String]] = [:]
     private var userAgentSettings = UserAgentSettings.recommended
     private var appliedUserAgentProfiles: [AIProvider: UserAgentProfile] = [:]
     private let logger = Logger(subsystem: "com.omni.app", category: "WebViewManager")
@@ -76,8 +93,9 @@ final class WebViewManager: NSObject, WKNavigationDelegate, WKScriptMessageHandl
             )
         }
 
-        // Register notification message handler
-        contentController.add(self, name: WebViewManager.notifyMessageName)
+        // Register notification message handler via weak proxy to avoid retain cycle
+        let weakProxy = WeakScriptMessageHandler(target: self)
+        contentController.add(weakProxy, name: WebViewManager.notifyMessageName)
 
         config.userContentController = contentController
 
@@ -145,7 +163,9 @@ final class WebViewManager: NSObject, WKNavigationDelegate, WKScriptMessageHandl
         let webView = webView(for: provider)
 
         if provider.requiresLoadedWebAppForSending && (webView.url == nil || webView.isLoading) {
-            pendingQuestions[provider] = question
+            var queue = pendingQuestions[provider] ?? []
+            queue.append(question)
+            pendingQuestions[provider] = queue
             logger.debug("Queued question for \(provider.displayName, privacy: .public) until the page is ready.")
             return sendCooldown
         }
@@ -239,6 +259,8 @@ final class WebViewManager: NSObject, WKNavigationDelegate, WKScriptMessageHandl
             .replacingOccurrences(of: "${", with: "\\${")
             .replacingOccurrences(of: "\n", with: "\\n")
             .replacingOccurrences(of: "\r", with: "")
+            .replacingOccurrences(of: "\u{2028}", with: "\\u2028")
+            .replacingOccurrences(of: "\u{2029}", with: "\\u2029")
     }
 
     private func resolvedWebTheme(for mode: AppearanceMode) -> String {
@@ -578,9 +600,20 @@ final class WebViewManager: NSObject, WKNavigationDelegate, WKScriptMessageHandl
         let theme = resolvedWebTheme(for: lastSyncedAppearanceMode ?? .system)
         applyRuntimeThemeOverride(in: webView, provider: provider, theme: theme)
 
-        if let question = pendingQuestions.removeValue(forKey: provider) {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                self.sendQuestion(question, to: provider)
+        drainPendingQuestions(for: provider)
+    }
+
+    private func drainPendingQuestions(for provider: AIProvider) {
+        guard var queue = pendingQuestions[provider], !queue.isEmpty else { return }
+        let next = queue.removeFirst()
+        pendingQuestions[provider] = queue.isEmpty ? nil : queue
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+            let cooldown = self.sendQuestion(next, to: provider)
+            if let remaining = self.pendingQuestions[provider], !remaining.isEmpty {
+                DispatchQueue.main.asyncAfter(deadline: .now() + cooldown) {
+                    self.drainPendingQuestions(for: provider)
+                }
             }
         }
     }

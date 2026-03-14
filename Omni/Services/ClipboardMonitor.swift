@@ -35,8 +35,9 @@ final class ClipboardMonitor {
 
     private func checkClipboard() {
         let pasteboard = NSPasteboard.general
-        guard pasteboard.changeCount != lastChangeCount else { return }
-        lastChangeCount = pasteboard.changeCount
+        let count = pasteboard.changeCount
+        guard count != lastChangeCount else { return }
+        lastChangeCount = count
 
         guard let text = pasteboard.string(forType: .string),
               !text.isEmpty,

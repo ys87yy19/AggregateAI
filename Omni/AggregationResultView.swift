@@ -14,8 +14,8 @@ final class StreamingTextStore: ObservableObject {
     private(set) var fullText: String = ""
 
     /// Pending buffer not yet flushed to NSTextView
-    private var buffer: String = ""
-    private var lastFlush: Date = .distantPast
+    private var bufferChunks: [String] = []
+    private var lastFlush: Double = 0  // CACurrentMediaTime()
     private let flushInterval: TimeInterval = 0.12
 
     private let defaultAttrs: [NSAttributedString.Key: Any] = [
@@ -27,8 +27,8 @@ final class StreamingTextStore: ObservableObject {
 
     func reset() {
         fullText = ""
-        buffer = ""
-        lastFlush = .distantPast
+        bufferChunks = []
+        lastFlush = 0
         textView?.textStorage?.setAttributedString(
             NSAttributedString(string: "等待 AI 响应...", attributes: defaultAttrs)
         )
@@ -36,9 +36,9 @@ final class StreamingTextStore: ObservableObject {
 
     /// Called on every streaming chunk — fast path, no SwiftUI involvement
     func append(_ chunk: String) {
-        buffer += chunk
-        let now = Date()
-        if now.timeIntervalSince(lastFlush) >= flushInterval {
+        bufferChunks.append(chunk)
+        let now = CACurrentMediaTime()
+        if now - lastFlush >= flushInterval {
             flush()
         }
     }
@@ -56,11 +56,11 @@ final class StreamingTextStore: ObservableObject {
     // MARK: - Internal
 
     private func flush() {
-        guard !buffer.isEmpty else { return }
+        guard !bufferChunks.isEmpty else { return }
 
-        let text = buffer
-        buffer = ""
-        lastFlush = Date()
+        let text = bufferChunks.joined()
+        bufferChunks = []
+        lastFlush = CACurrentMediaTime()
 
         // First chunk — clear placeholder
         if fullText.isEmpty {
@@ -165,6 +165,7 @@ struct AggregationResultView: View {
         }
         .frame(minWidth: 700, minHeight: 500)
         .frame(idealWidth: 800, idealHeight: 600)
+        .onAppear { StreamingTextStore.shared.reset() }
         .alert("Omni", isPresented: $showAlert) {
             Button("OK") {}
         } message: {
@@ -204,6 +205,12 @@ struct AggregationResultView: View {
         exportMarkdown()
     }
 
+    private static let smartTitleDateFormatter: DateFormatter = {
+        let df = DateFormatter()
+        df.dateFormat = "yyyy-MM-dd_HHmmss"
+        return df
+    }()
+
     /// Call the API to generate a short title, with fallback to question or date
     private func generateSmartTitle(text: String) async -> String {
         do {
@@ -219,9 +226,7 @@ struct AggregationResultView: View {
             if !appState.syncQuestion.isEmpty {
                 return String(appState.syncQuestion.prefix(40))
             }
-            let df = DateFormatter()
-            df.dateFormat = "yyyy-MM-dd_HHmmss"
-            return "AI聚合笔记-\(df.string(from: Date()))"
+            return "AI聚合笔记-\(AggregationResultView.smartTitleDateFormatter.string(from: Date()))"
         }
     }
 
@@ -238,7 +243,7 @@ struct AggregationResultView: View {
     }
 
     private func resolveSaveFolderURL() -> URL? {
-        guard let bookmarkData = UserDefaults.standard.data(forKey: SettingsKeys.apiSaveBookmark) else {
+        guard let bookmarkData = OmniSettingsStore.shared.data(forKey: SettingsKeys.apiSaveBookmark) else {
             return nil
         }
         var isStale = false
@@ -256,7 +261,17 @@ struct AggregationResultView: View {
                 includingResourceValuesForKeys: nil,
                 relativeTo: nil
             ) {
-                UserDefaults.standard.set(newData, forKey: SettingsKeys.apiSaveBookmark)
+                OmniSettingsStore.shared.set(newData, forKey: SettingsKeys.apiSaveBookmark)
+                // Re-resolve from refreshed bookmark to get the updated URL
+                var freshStale = false
+                if let freshURL = try? URL(
+                    resolvingBookmarkData: newData,
+                    options: .withSecurityScope,
+                    relativeTo: nil,
+                    bookmarkDataIsStale: &freshStale
+                ) {
+                    return freshURL
+                }
             }
         }
         return url

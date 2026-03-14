@@ -53,8 +53,8 @@ final class NotificationService: NSObject, UNUserNotificationCenterDelegate {
             if let appDelegate = NSApp.delegate as? AppDelegate {
                 appDelegate.toggleWindow()
             }
+            completionHandler()
         }
-        completionHandler()
     }
 
     // Show notification even when app is in foreground

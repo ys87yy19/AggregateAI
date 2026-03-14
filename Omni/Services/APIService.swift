@@ -280,6 +280,62 @@ final class APIService {
         }
     }
 
+    // MARK: - Generic Completion (Non-streaming)
+
+    func completeText(
+        endpoint: String,
+        apiKey: String,
+        model: String,
+        systemPrompt: String,
+        userPrompt: String
+    ) async throws -> String {
+        guard !endpoint.isEmpty else { throw APIError.noEndpointConfigured }
+        guard !model.isEmpty else { throw APIError.noModelSelected }
+
+        let urlString = endpoint.hasSuffix("/")
+            ? "\(endpoint)v1/chat/completions"
+            : "\(endpoint)/v1/chat/completions"
+
+        guard let url = URL(string: urlString) else { throw APIError.invalidURL }
+
+        let requestBody = ChatRequest(
+            model: model,
+            messages: [
+                ChatRequest.Message(role: "system", content: systemPrompt),
+                ChatRequest.Message(role: "user", content: userPrompt)
+            ],
+            stream: false
+        )
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 90
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        if !apiKey.isEmpty {
+            request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        }
+        request.httpBody = try JSONEncoder().encode(requestBody)
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw APIError.networkError(
+                NSError(domain: "APIService", code: -1, userInfo: [NSLocalizedDescriptionKey: "无效的 HTTP 响应"])
+            )
+        }
+
+        guard (200..<300).contains(httpResponse.statusCode) else {
+            let body = String(data: data, encoding: .utf8) ?? ""
+            throw APIError.httpError(httpResponse.statusCode, body)
+        }
+
+        let parsed = try JSONDecoder().decode(NonStreamingResponse.self, from: data)
+        let content = parsed.choices.first?.message.content.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if content.isEmpty {
+            throw APIError.noContent
+        }
+        return content
+    }
+
     // MARK: - Aggregation (Streaming)
 
     func aggregate(

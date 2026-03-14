@@ -38,11 +38,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         icon: "bird.fill", width: 700, height: 900
     )
 
-    private let xianyuService = WebService(
-        id: "xianyu", title: "闲鱼", url: "https://www.goofish.com",
-        icon: "cart.fill", width: 1200, height: 800
-    )
-
     private var twitterWebView: WKWebView?
     private var twitterNavDelegate: TwitterNavigationDelegate?
 
@@ -173,12 +168,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         mailItem.image = NSImage(systemSymbolName: "envelope.fill", accessibilityDescription: nil)
         statusMenu.addItem(mailItem)
 
-        // 5. 闲鱼
-        let xianyuItem = NSMenuItem(title: "闲鱼", action: #selector(openXianyu), keyEquivalent: "")
-        xianyuItem.target = self
-        xianyuItem.image = NSImage(systemSymbolName: "cart.fill", accessibilityDescription: nil)
-        statusMenu.addItem(xianyuItem)
-
         statusMenu.addItem(NSMenuItem.separator())
 
         // 4. 偏好设置
@@ -248,9 +237,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: - Service WebView Windows
 
-    private func openServiceWindow(_ service: WebService) {
+    private func openServiceWindow(_ service: WebService, forceReloadOnShow: Bool = false) {
         // If window already exists, just show it
         if let window = serviceWindows[service.id] {
+            if let webView = serviceWebViews[service.id],
+               let targetURL = URL(string: service.url),
+               forceReloadOnShow || webView.url?.absoluteString != targetURL.absoluteString {
+                webView.load(URLRequest(url: targetURL))
+            }
             if window.isMiniaturized {
                 window.deminiaturize(nil)
             }
@@ -323,6 +317,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         """)
     }
 
+    func cleanupService(id: String) {
+        serviceWindows.removeValue(forKey: id)
+        serviceWebViews.removeValue(forKey: id)
+        serviceWindowDelegates.removeValue(forKey: id)
+        ServiceToolbarDelegate.shared.unregisterWebView(for: id)
+        if id == twitterService.id {
+            twitterWebView = nil
+            twitterNavDelegate = nil
+        }
+    }
+
     @discardableResult
     func openIntegratedModule(id: String) -> Bool {
         guard let module = OmniModuleRegistry.module(id: id) else { return false }
@@ -332,12 +337,42 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @discardableResult
     private func openIntegratedModule(_ module: OmniModuleDefinition) -> Bool {
         switch module.launchStyle {
-        case .webApp(let url, let width, let height):
+        case .webApp(_, let width, let height):
+            let resolvedURL = appState.baseURL(for: module)
+
+            if module.id == OmniModuleRegistry.antigravity.id {
+                Task { @MainActor in
+                    appState.presentModuleNotice("正在检查 Antigravity 服务…")
+                    let ready = await appState.ensureAntigravityRunnerForLaunch()
+                    if !ready {
+                        appState.presentModuleNotice("Antigravity 未就绪，已尝试自动启动。可在设置中点击「预热运行器」查看状态", kind: .failure)
+                    }
+
+                    if ready {
+                        let syncStatus = await OmniIntegrationService.shared.sync(module, from: appState)
+                        appState.moduleSyncStatuses[module.id] = syncStatus
+                    }
+
+                    openServiceWindow(
+                        WebService(
+                            id: module.id,
+                            title: module.title,
+                            url: resolvedURL,
+                            icon: module.icon,
+                            width: width,
+                            height: height
+                        ),
+                        forceReloadOnShow: true
+                    )
+                }
+                return true
+            }
+
             openServiceWindow(
                 WebService(
                     id: module.id,
                     title: module.title,
-                    url: url,
+                    url: resolvedURL,
                     icon: module.icon,
                     width: width,
                     height: height
@@ -362,10 +397,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func openGmail() {
         openServiceWindow(gmailService)
-    }
-
-    @objc private func openXianyu() {
-        openServiceWindow(xianyuService)
     }
 
     @objc private func openTwitter() {
@@ -543,12 +574,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
 // MARK: - Service Toolbar Delegate
 
+final class ServiceToolbarItem: NSToolbarItem {
+    var serviceId: String = ""
+}
+
 final class ServiceToolbarDelegate: NSObject, NSToolbarDelegate {
     static let shared = ServiceToolbarDelegate()
     private var webViews: [String: WKWebView] = [:]
 
     func registerWebView(_ webView: WKWebView, for serviceId: String) {
         webViews[serviceId] = webView
+    }
+
+    func unregisterWebView(for serviceId: String) {
+        webViews.removeValue(forKey: serviceId)
     }
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
@@ -567,7 +606,8 @@ final class ServiceToolbarDelegate: NSObject, NSToolbarDelegate {
     func toolbar(_ toolbar: NSToolbar, itemForItemIdentifier itemIdentifier: NSToolbarItem.Identifier, willBeInsertedIntoToolbar flag: Bool) -> NSToolbarItem? {
         let serviceId = String(toolbar.identifier).replacingOccurrences(of: "ServiceToolbar_", with: "")
 
-        let item = NSToolbarItem(itemIdentifier: itemIdentifier)
+        let item = ServiceToolbarItem(itemIdentifier: itemIdentifier)
+        item.serviceId = serviceId
 
         switch itemIdentifier.rawValue {
         case "back":
@@ -575,19 +615,16 @@ final class ServiceToolbarDelegate: NSObject, NSToolbarDelegate {
             item.image = NSImage(systemSymbolName: "chevron.left", accessibilityDescription: "Back")
             item.action = #selector(goBack(_:))
             item.target = self
-            item.tag = serviceId.hashValue
         case "forward":
             item.label = "前进"
             item.image = NSImage(systemSymbolName: "chevron.right", accessibilityDescription: "Forward")
             item.action = #selector(goForward(_:))
             item.target = self
-            item.tag = serviceId.hashValue
         case "reload":
             item.label = "刷新"
             item.image = NSImage(systemSymbolName: "arrow.clockwise", accessibilityDescription: "Reload")
             item.action = #selector(reload(_:))
             item.target = self
-            item.tag = serviceId.hashValue
         default:
             return nil
         }
@@ -595,20 +632,21 @@ final class ServiceToolbarDelegate: NSObject, NSToolbarDelegate {
         return item
     }
 
-    private func findWebView(for tag: Int) -> WKWebView? {
-        return webViews.first(where: { $0.key.hashValue == tag })?.value
+    private func findWebView(for item: NSToolbarItem) -> WKWebView? {
+        guard let si = item as? ServiceToolbarItem else { return nil }
+        return webViews[si.serviceId]
     }
 
     @objc func goBack(_ sender: NSToolbarItem) {
-        findWebView(for: sender.tag)?.goBack()
+        findWebView(for: sender)?.goBack()
     }
 
     @objc func goForward(_ sender: NSToolbarItem) {
-        findWebView(for: sender.tag)?.goForward()
+        findWebView(for: sender)?.goForward()
     }
 
     @objc func reload(_ sender: NSToolbarItem) {
-        findWebView(for: sender.tag)?.reload()
+        findWebView(for: sender)?.reload()
     }
 }
 
@@ -625,6 +663,7 @@ final class ServiceWindowDelegate: NSObject, NSWindowDelegate {
 
     func windowWillClose(_ notification: Notification) {
         appDelegate?.pauseMedia(for: serviceId)
+        appDelegate?.cleanupService(id: serviceId)
     }
 }
 

@@ -6,7 +6,7 @@ final class ObsidianService {
     static let shared = ObsidianService()
 
     func resolveVaultURL() -> URL? {
-        guard let bookmarkData = UserDefaults.standard.data(forKey: SettingsKeys.obsidianVaultBookmark) else {
+        guard let bookmarkData = OmniSettingsStore.shared.data(forKey: SettingsKeys.obsidianVaultBookmark) else {
             return nil
         }
         var isStale = false
@@ -25,7 +25,16 @@ final class ObsidianService {
                 includingResourceValuesForKeys: nil,
                 relativeTo: nil
             ) {
-                UserDefaults.standard.set(newData, forKey: SettingsKeys.obsidianVaultBookmark)
+                OmniSettingsStore.shared.set(newData, forKey: SettingsKeys.obsidianVaultBookmark)
+                var freshStale = false
+                if let freshURL = try? URL(
+                    resolvingBookmarkData: newData,
+                    options: .withSecurityScope,
+                    relativeTo: nil,
+                    bookmarkDataIsStale: &freshStale
+                ) {
+                    return freshURL
+                }
             }
         }
         return url
@@ -45,11 +54,17 @@ final class ObsidianService {
                 includingResourceValuesForKeys: nil,
                 relativeTo: nil
             ) {
-                UserDefaults.standard.set(bookmarkData, forKey: SettingsKeys.obsidianVaultBookmark)
+                OmniSettingsStore.shared.set(bookmarkData, forKey: SettingsKeys.obsidianVaultBookmark)
                 appState.obsidianVaultPath = url.path
             }
         }
     }
+
+    private static let vaultDateFormatter: DateFormatter = {
+        let df = DateFormatter()
+        df.dateFormat = "yyyy-MM-dd_HHmmss"
+        return df
+    }()
 
     func saveToVault(content: String, provider: AIProvider, question: String?) throws {
         guard let vaultURL = resolveVaultURL() else {
@@ -64,9 +79,7 @@ final class ObsidianService {
         let subfolder = vaultURL.appendingPathComponent("Omni", isDirectory: true)
         try FileManager.default.createDirectory(at: subfolder, withIntermediateDirectories: true)
 
-        let dateFormatter = DateFormatter()
-        dateFormatter.dateFormat = "yyyy-MM-dd_HHmmss"
-        let filename = "\(provider.displayName)-\(dateFormatter.string(from: Date())).md"
+        let filename = "\(provider.displayName)-\(ObsidianService.vaultDateFormatter.string(from: Date())).md"
         let fileURL = subfolder.appendingPathComponent(filename)
 
         let isoFormatter = ISO8601DateFormatter()
@@ -103,13 +116,11 @@ final class ObsidianService {
         }
         defer { vaultURL.stopAccessingSecurityScopedResource() }
 
-        let subfolder = vaultURL.appendingPathComponent("Omni", isDirectory: true)
-        try FileManager.default.createDirectory(at: subfolder, withIntermediateDirectories: true)
+        let subfolder2 = vaultURL.appendingPathComponent("Omni", isDirectory: true)
+        try FileManager.default.createDirectory(at: subfolder2, withIntermediateDirectories: true)
 
-        let dateFormatter = DateFormatter()
-        dateFormatter.dateFormat = "yyyy-MM-dd_HHmmss"
-        let filename = "Aggregated-\(dateFormatter.string(from: Date())).md"
-        let fileURL = subfolder.appendingPathComponent(filename)
+        let filename = "Aggregated-\(ObsidianService.vaultDateFormatter.string(from: Date())).md"
+        let fileURL = subfolder2.appendingPathComponent(filename)
 
         try markdown.write(to: fileURL, atomically: true, encoding: .utf8)
     }

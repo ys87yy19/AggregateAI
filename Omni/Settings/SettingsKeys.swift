@@ -29,8 +29,98 @@ enum SettingsKeys {
     static let apiSystemPrompt = "apiSystemPrompt"
     static let apiSaveBookmark = "apiSaveBookmark"
     static let apiSavePath = "apiSavePath"
+    static let gatewaySource = "gatewaySource"
+    static let customAPIEndpoint = "customAPIEndpoint"
+    static let customAPISelectedModel = "customAPISelectedModel"
+    static let omniRouteDashboardURL = "omniRouteDashboardURL"
+    static let omniRouteAPIURL = "omniRouteAPIURL"
+    static let omniRoutePreferredModel = "omniRoutePreferredModel"
 
     // Feature 16: Integrated modules
     static let siftlyBaseURL = "siftlyBaseURL"
     static let siftlyAutoSyncEnabled = "siftlyAutoSyncEnabled"
+    static let antigravityBaseURL = "antigravityBaseURL"
+    static let antigravityInstallPath = "antigravityInstallPath"
+    static let antigravityEmail = "antigravityEmail"
+    static let antigravityProjectId = "antigravityProjectId"
+    static let antigravityAutoFixEnabled = "antigravityAutoFixEnabled"
+
+    // Persisted app setting keys (used by defaults suite migration)
+    static let persistedKeys: [String] = [
+        workspaceMode,
+        layoutMode,
+        appearanceMode,
+        isPinned,
+        hotkeyKeyCode,
+        hotkeyModifiers,
+        notificationsEnabled,
+        notifyOnlyWhenHidden,
+        clipboardMonitorEnabled,
+        obsidianVaultBookmark,
+        obsidianVaultPath,
+        apiEndpoint,
+        apiKey,
+        apiSelectedModel,
+        apiSystemPrompt,
+        apiSaveBookmark,
+        apiSavePath,
+        gatewaySource,
+        customAPIEndpoint,
+        customAPISelectedModel,
+        omniRouteDashboardURL,
+        omniRouteAPIURL,
+        omniRoutePreferredModel,
+        siftlyBaseURL,
+        siftlyAutoSyncEnabled,
+        antigravityBaseURL,
+        antigravityInstallPath,
+        antigravityEmail,
+        antigravityProjectId,
+        antigravityAutoFixEnabled,
+    ]
+}
+
+enum OmniSettingsStore {
+    static let suiteName = "com.omni.settings.v1"
+
+    private static let legacyDomains: [String] = [
+        "com.omni.app",
+        "com.aggregateai.app",
+        "com.aggregate.ai",
+        "AggregateAI"
+    ]
+
+    static let shared: UserDefaults = {
+        let store = UserDefaults(suiteName: suiteName) ?? .standard
+        migrateMissingValues(target: store)
+        return store
+    }()
+
+    private static func migrateMissingValues(target: UserDefaults) {
+        var sourceDictionaries: [[String: Any]] = []
+
+        if let bundleID = Bundle.main.bundleIdentifier,
+           let dict = UserDefaults.standard.persistentDomain(forName: bundleID),
+           !dict.isEmpty {
+            sourceDictionaries.append(dict)
+        }
+
+        for domain in legacyDomains {
+            guard let dict = UserDefaults.standard.persistentDomain(forName: domain), !dict.isEmpty else {
+                continue
+            }
+            sourceDictionaries.append(dict)
+        }
+
+        sourceDictionaries.append(UserDefaults.standard.dictionaryRepresentation())
+
+        for key in SettingsKeys.persistedKeys {
+            guard target.object(forKey: key) == nil else { continue }
+            for dict in sourceDictionaries {
+                guard let value = dict[key] else { continue }
+                target.set(value, forKey: key)
+                break
+            }
+        }
+    }
 }
