@@ -510,6 +510,13 @@ final class ModulesViewModel: ObservableObject {
     private static let startupPollIntervalNanoseconds: UInt64 = 1_000_000_000
     /// PIDs that must never be targeted by the AI auto-fix kill commands.
     private static let antigravityDevLogPath = "/tmp/omni-antigravity-dev.log"
+    /// System process PIDs that are off-limits to AI-generated kill commands.
+    private static let protectedPIDs: Set<Int> = [0, 1]
+    /// npm script used to start the Antigravity dev server.
+    private static let antigravityStartScript = "dev"
+    /// Vite CLI flags passed to the dev server to bind to localhost only.
+    private static let antigravityServerHostFlag = "--host 127.0.0.1"
+    private static let antigravityServerStrictPortFlag = "--strictPort"
 
     func presentModuleNotice(_ message: String, kind: ModuleActionNotice.Kind = .info) {
         noticeDismissTask?.cancel()
@@ -643,7 +650,7 @@ final class ModulesViewModel: ObservableObject {
         guard !rawPath.isEmpty else { return false }
         let escapedPath = "'\(rawPath.replacingOccurrences(of: "'", with: "'\\''"))'"
         let port = URL(string: s.antigravityBaseURL)?.port ?? 4173
-        let command = "cd \(escapedPath) && OMNI_EMBEDDED=1 nohup npm run dev -- --host 127.0.0.1 --port \(port) --strictPort >\(Self.antigravityDevLogPath) 2>&1 < /dev/null &!"
+        let command = "cd \(escapedPath) && OMNI_EMBEDDED=1 nohup npm run \(Self.antigravityStartScript) -- \(Self.antigravityServerHostFlag) --port \(port) \(Self.antigravityServerStrictPortFlag) >\(Self.antigravityDevLogPath) 2>&1 < /dev/null &!"
         do {
             let result = try await runShell(command, timeout: 20)
             return result.exitCode == 0

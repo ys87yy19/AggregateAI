@@ -3,20 +3,6 @@ import Carbon.HIToolbox
 import Combine
 import Foundation
 
-enum GatewaySource: String, CaseIterable {
-    case custom
-    case omniroute
-
-    var displayName: String {
-        switch self {
-        case .custom:
-            return "Custom"
-        case .omniroute:
-            return "OmniRoute"
-        }
-    }
-}
-
 // MARK: - App State
 
 @MainActor
@@ -110,7 +96,7 @@ final class AppState: ObservableObject {
     @Published var siftlyBaseURL: String = "http://127.0.0.1:3000"
     @Published var siftlyAutoSyncEnabled: Bool = true
     @Published var antigravityBaseURL: String = "http://127.0.0.1:4173"
-    @Published var antigravityInstallPath: String = "/Users/xwx0316/Documents/AI/antigravity-debugger"
+    @Published var antigravityInstallPath: String = ""
     @Published var antigravityEmail: String = ""
     @Published var antigravityProjectId: String = ""
     @Published var antigravityAutoFixEnabled: Bool = true
@@ -201,7 +187,7 @@ final class AppState: ObservableObject {
         siftlyBaseURL = d.string(forKey: SettingsKeys.siftlyBaseURL) ?? "http://127.0.0.1:3000"
         siftlyAutoSyncEnabled = d.object(forKey: SettingsKeys.siftlyAutoSyncEnabled) as? Bool ?? true
         antigravityBaseURL = d.string(forKey: SettingsKeys.antigravityBaseURL) ?? "http://127.0.0.1:4173"
-        antigravityInstallPath = d.string(forKey: SettingsKeys.antigravityInstallPath) ?? "/Users/xwx0316/Documents/AI/antigravity-debugger"
+        antigravityInstallPath = d.string(forKey: SettingsKeys.antigravityInstallPath) ?? ""
         antigravityEmail = d.string(forKey: SettingsKeys.antigravityEmail) ?? ""
         antigravityProjectId = d.string(forKey: SettingsKeys.antigravityProjectId) ?? ""
         antigravityAutoFixEnabled = d.object(forKey: SettingsKeys.antigravityAutoFixEnabled) as? Bool ?? true

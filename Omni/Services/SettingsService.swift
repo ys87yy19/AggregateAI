@@ -63,7 +63,7 @@ struct AppSettings: Equatable {
 
 // MARK: - SettingsService
 
-/// Centralised settings persistence layer.
+/// Centralized settings persistence layer.
 ///
 /// - Reads all values from `OmniSettingsStore` (UserDefaults) and `KeychainService`
 ///   at initialisation, handling migration from legacy keys.

@@ -41,7 +41,7 @@ struct SharedAISettingsSnapshot {
     /// Dashboard URL, only present for OmniRoute source.
     let dashboardURL: String?
 
-    // MARK: Normalised accessors
+    // MARK: Normalized accessors
 
     var normalizedEndpoint: String {
         endpoint.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -273,8 +273,10 @@ enum OmniModuleRegistry {
         updateDefinition: ModuleUpdateDefinition(
             owner: "viperrcrypto",
             repository: "Siftly",
-            installPathOverride: nil,          // user configures via Settings
+            /// nil means: use managedDocker.installPath (or SettingsService.settings.antigravityInstallPath) at runtime.
+            installPathOverride: nil,
             localVersionSource: .packageJSON(relativePath: "package.json"),
+            /// installPath is "" here; DockerModuleService fills it from SettingsService at runtime.
             updateStrategy: .nodeProcess(installPath: "", pm2Name: "siftly")
         )
     )
@@ -289,8 +291,12 @@ enum OmniModuleRegistry {
         managedDocker: ManagedDockerModuleDefinition(
             dashboardURL: "http://127.0.0.1:20128",
             apiBaseURL: "http://127.0.0.1:20129/v1",
-            installPath: "",                   // user configures via Settings
-            composeFilePath: "",               // derived from installPath at runtime
+            /// Empty string default; DockerModuleService reads the actual path from
+            /// SettingsService.settings at runtime before performing any Docker operations.
+            installPath: "",
+            /// Empty string default; derived from installPath at runtime
+            /// (e.g., "\(installPath)/docker-compose.yml").
+            composeFilePath: "",
             composeProfile: "base",
             composeServiceName: "omniroute-base",
             dockerProjectName: "omniroute",
@@ -299,8 +305,10 @@ enum OmniModuleRegistry {
         updateDefinition: ModuleUpdateDefinition(
             owner: "diegosouzapw",
             repository: "OmniRoute",
+            /// nil means: use managedDocker.installPath (resolved from SettingsService) at runtime.
             installPathOverride: nil,
             localVersionSource: .packageJSON(relativePath: "package.json"),
+            /// composeFilePath is "" here; DockerModuleService fills it from SettingsService at runtime.
             updateStrategy: .dockerCompose(composeFilePath: "", profile: "base")
         )
     )
